@@ -52,3 +52,5 @@ $ ratt golang-github-jacobsa-gcloud_0.0\~git20150709-2_amd64.changes
 2015/08/16 11:49:19 Build results:
 2015/08/16 11:49:19 PASSED: golang-github-jacobsa-ratelimit_0.0~git20150723.0.2ca5e0c-1
 ```
+
+ratt uses `sbuild(1)` to build packages, see https://wiki.debian.org/sbuild for instructions on how to set up sbuild. Be sure to add `--components=main,contrib,non-free` to the sbuild-createchroot line in case you want to deal with packages outside of main as well.
