@@ -104,33 +104,50 @@ func main() {
 	}
 
 	var sourcesPaths []string
-	releaseMatches, err := filepath.Glob("/var/lib/apt/lists/*_InRelease")
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, releasepath := range releaseMatches {
-		r, err := os.Open(releasepath)
+	indexTargets := exec.Command("apt-get",
+		"indextargets",
+		"--format",
+		"$(FILENAME)",
+		"Codename: sid",
+		"ShortDesc: Sources")
+	if lines, err := indexTargets.Output(); err == nil {
+		for _, line := range strings.Split(string(lines), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" {
+				sourcesPaths = append(sourcesPaths, line)
+			}
+		}
+	} else {
+		// Fallback for older versions of apt-get. See
+		// https://bugs.debian.org/801594 for context.
+		releaseMatches, err := filepath.Glob("/var/lib/apt/lists/*_InRelease")
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer r.Close()
-		release, err := control.ParseParagraph(bufio.NewReader(r))
-		if err != nil {
-			log.Fatal(err)
-		}
-		if release.Values["Suite"] != "unstable" {
-			continue
-		}
+		for _, releasepath := range releaseMatches {
+			r, err := os.Open(releasepath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer r.Close()
+			release, err := control.ParseParagraph(bufio.NewReader(r))
+			if err != nil {
+				log.Fatal(err)
+			}
+			if release.Values["Suite"] != "unstable" {
+				continue
+			}
 
-		listsPrefix := listsPrefixRe.FindStringSubmatch(releasepath)
-		if len(listsPrefix) != 2 {
-			log.Fatalf("release file path %q does not match regexp %q\n", releasepath, listsPrefixRe)
+			listsPrefix := listsPrefixRe.FindStringSubmatch(releasepath)
+			if len(listsPrefix) != 2 {
+				log.Fatalf("release file path %q does not match regexp %q\n", releasepath, listsPrefixRe)
+			}
+			sourceMatches, err := filepath.Glob(fmt.Sprintf("/var/lib/apt/lists/%s_*_Sources", listsPrefix[1]))
+			if err != nil {
+				log.Fatal(err)
+			}
+			sourcesPaths = append(sourcesPaths, sourceMatches...)
 		}
-		sourceMatches, err := filepath.Glob(fmt.Sprintf("/var/lib/apt/lists/%s_*_Sources", listsPrefix[1]))
-		if err != nil {
-			log.Fatal(err)
-		}
-		sourcesPaths = append(sourcesPaths, sourceMatches...)
 	}
 
 	if len(sourcesPaths) == 0 {
