@@ -32,6 +32,10 @@ var (
 		false,
 		"Print sbuild command lines, but do not actually build the reverse-build-dependencies")
 
+	sbuildDist = flag.String("sbuild_dist",
+		"",
+		"sbuild --dist= value (e.g. \"sid\"). Defaults to the Distribution: entry from the specified .changes file")
+
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
 
@@ -166,6 +170,11 @@ func main() {
 
 	// TODO: what’s a good integration method for doing this in more setups, e.g. on a cloud provider or something? mapreri from #debian-qa says jenkins.debian.net is suitable.
 
+	if strings.TrimSpace(*sbuildDist) == "" {
+		*sbuildDist = changes.Distribution
+		log.Printf("Setting -sbuild_dist=%s (from .changes file)\n", *sbuildDist)
+	}
+
 	buildresults := make(map[string]bool)
 	for src, versions := range rebuild {
 		sort.Sort(sort.Reverse(version.Slice(versions)))
@@ -174,7 +183,7 @@ func main() {
 		// TODO: discard resulting package immediately?
 		args := []string{
 			"--arch-all",
-			"--dist=sid",
+			"--dist=" + *sbuildDist,
 			"--nolog",
 			target,
 		}
