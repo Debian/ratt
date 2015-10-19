@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -108,6 +109,7 @@ func main() {
 	}
 
 	var sourcesPaths []string
+	var packagesPaths []string
 	indexTargets := exec.Command("apt-get",
 		"indextargets",
 		"--format",
@@ -119,6 +121,23 @@ func main() {
 			trimmed := strings.TrimSpace(line)
 			if trimmed != "" {
 				sourcesPaths = append(sourcesPaths, line)
+			}
+		}
+		binaryIndexTargets := exec.Command(
+			"apt-get",
+			"indextargets",
+			"--format",
+			"$(FILENAME)",
+			"Codename: sid",
+			"ShortDesc: Packages")
+		lines, err = binaryIndexTargets.Output()
+		if err != nil {
+			log.Fatal("Could not get packages files using %+v: %v", binaryIndexTargets.Args, err)
+		}
+		for _, line := range strings.Split(string(lines), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" {
+				packagesPaths = append(packagesPaths, line)
 			}
 		}
 	} else {
@@ -151,6 +170,11 @@ func main() {
 				log.Fatal(err)
 			}
 			sourcesPaths = append(sourcesPaths, sourceMatches...)
+			packagesMatches, err := filepath.Glob(fmt.Sprintf("/var/lib/apt/lists/%s_*_Packages", listsPrefix[1]))
+			if err != nil {
+				log.Fatal(err)
+			}
+			packagesPaths = append(packagesPaths, packagesMatches...)
 		}
 	}
 
@@ -160,9 +184,50 @@ func main() {
 
 	rebuild := make(map[string][]version.Version)
 
+	archCmd := exec.Command(
+		"dpkg-architecture",
+		"--query=DEB_BUILD_ARCH")
+	archOut, err := archCmd.Output()
+	if err != nil {
+		log.Fatal(err)
+	}
+	arch := strings.TrimSpace(string(archOut))
+
+	// TODO: Cache this output based on the .changes file. dose-ceve takes quite a while.
+	ceve := exec.Command(
+		"dose-ceve",
+		"--deb-native-arch="+arch,
+		"-T", "debsrc",
+		"-r", strings.Join(changes.Binaries, ","),
+		"-G", "pkg")
+	for _, packagesPath := range packagesPaths {
+		ceve.Args = append(ceve.Args, "deb://"+packagesPath)
+	}
 	for _, sourcesPath := range sourcesPaths {
-		if err := addReverseBuildDeps(sourcesPath, binaries, rebuild); err != nil {
-			log.Fatal(err)
+		ceve.Args = append(ceve.Args, "debsrc://"+sourcesPath)
+	}
+
+	log.Printf("Figuring out reverse build dependencies using dose-ceve(1). This might take a while\n")
+	if out, err := ceve.Output(); err == nil {
+		r := bufio.NewReader(strings.NewReader(string(out)))
+		for {
+			paragraph, err := control.ParseParagraph(r)
+			if paragraph == nil || err == io.EOF {
+				break
+			}
+			pkg := paragraph.Values["Package"]
+			ver, err := version.Parse(paragraph.Values["Version"])
+			if err != nil {
+				log.Fatalf("Cannot parse version number %q in dose-ceve(1) output: %v", paragraph.Values["Version"], err)
+			}
+			rebuild[pkg] = append(rebuild[pkg], ver)
+		}
+	} else {
+		log.Printf("dose-ceve(1) failed (%v), falling back to interpreting Sources directly\n", err)
+		for _, sourcesPath := range sourcesPaths {
+			if err := addReverseBuildDeps(sourcesPath, binaries, rebuild); err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 
