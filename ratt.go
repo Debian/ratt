@@ -58,7 +58,7 @@ func addReverseBuildDeps(sourcesPath string, binaries map[string]bool, rebuild m
 	}
 	defer s.Close()
 	idx, err := control.ParseSourceIndex(bufio.NewReader(s))
-	if err != nil {
+	if err != nil && err != io.EOF {
 		return err
 	}
 
@@ -87,7 +87,7 @@ func main() {
 	}
 	defer c.Close()
 	changes, err := control.ParseChanges(bufio.NewReader(c), changesPath)
-	if err != nil {
+	if err != nil && err != io.EOF {
 		log.Fatal(err)
 	}
 
@@ -154,7 +154,7 @@ func main() {
 			}
 			defer r.Close()
 			release, err := control.ParseParagraph(bufio.NewReader(r))
-			if err != nil {
+			if err != nil && err != io.EOF {
 				log.Fatal(err)
 			}
 			if release.Values["Suite"] != "unstable" {
