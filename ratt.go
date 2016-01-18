@@ -52,12 +52,23 @@ func dependsOn(src control.SourceIndex, binaries map[string]bool) bool {
 
 func addReverseBuildDeps(sourcesPath string, binaries map[string]bool, rebuild map[string][]version.Version) error {
 	log.Printf("Loading sources index %q\n", sourcesPath)
-	s, err := os.Open(sourcesPath)
-	if err != nil {
-		return err
+	catFile := exec.Command("/usr/lib/apt/apt-helper",
+		"cat-file",
+		sourcesPath)
+	var s *bufio.Reader
+	if lines, err := catFile.Output(); err == nil {
+		s = bufio.NewReader(strings.NewReader(string(lines)))
+	} else {
+		// Fallback for older versions of apt-get. See
+		// <20160111171230.GA17291@debian.org> for context.
+		o, err := os.Open(sourcesPath)
+		if err != nil {
+			return err
+		}
+		defer o.Close()
+		s = bufio.NewReader(o)
 	}
-	defer s.Close()
-	idx, err := control.ParseSourceIndex(bufio.NewReader(s))
+	idx, err := control.ParseSourceIndex(s)
 	if err != nil && err != io.EOF {
 		return err
 	}
