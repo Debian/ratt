@@ -50,6 +50,28 @@ func dependsOn(src control.SourceIndex, binaries map[string]bool) bool {
 	return false
 }
 
+type InRelease struct {
+	control.Paragraph
+
+	Origin        string
+	Label         string
+	Suite         string
+	Codename      string
+	Changelogs    string
+	Date          string
+	ValidUntil    string `control:"Valid-Until"`
+	Architectures []string
+	Components    []string
+	Description   string
+}
+
+type DoseCeve struct {
+	control.Paragraph
+
+	Package string
+	Version version.Version
+}
+
 func addReverseBuildDeps(sourcesPath string, binaries map[string]bool, rebuild map[string][]version.Version) error {
 	log.Printf("Loading sources index %q\n", sourcesPath)
 	catFile := exec.Command("/usr/lib/apt/apt-helper",
@@ -164,11 +186,13 @@ func main() {
 				log.Fatal(err)
 			}
 			defer r.Close()
-			release, err := control.ParseParagraph(bufio.NewReader(r))
-			if err != nil && err != io.EOF {
+
+			inReleaase := InRelease{}
+			if err := control.Unmarshal(&inReleaase, r); err != nil {
 				log.Fatal(err)
 			}
-			if release.Values["Suite"] != "unstable" {
+
+			if inReleaase.Suite != "unstable" {
 				continue
 			}
 
@@ -221,17 +245,14 @@ func main() {
 	log.Printf("Figuring out reverse build dependencies using dose-ceve(1). This might take a while\n")
 	if out, err := ceve.Output(); err == nil {
 		r := bufio.NewReader(strings.NewReader(string(out)))
-		for {
-			paragraph, err := control.ParseParagraph(r)
-			if paragraph == nil || err == io.EOF {
-				break
-			}
-			pkg := paragraph.Values["Package"]
-			ver, err := version.Parse(paragraph.Values["Version"])
-			if err != nil {
-				log.Fatalf("Cannot parse version number %q in dose-ceve(1) output: %v", paragraph.Values["Version"], err)
-			}
-			rebuild[pkg] = append(rebuild[pkg], ver)
+		doseCeves := []DoseCeve{}
+		if err := control.Unmarshal(&doseCeves, r); err != nil {
+			log.Fatal(err)
+		}
+
+		for _, doseCeve := range doseCeves {
+			pkg := doseCeve.Package
+			rebuild[pkg] = append(rebuild[pkg], doseCeve.Version)
 		}
 	} else {
 		log.Printf("dose-ceve(1) failed (%v), falling back to interpreting Sources directly\n", err)
