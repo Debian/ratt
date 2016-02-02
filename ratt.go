@@ -164,11 +164,13 @@ func main() {
 				log.Fatal(err)
 			}
 			defer r.Close()
-			release, err := control.ParseParagraph(bufio.NewReader(r))
-			if err != nil && err != io.EOF {
+			var inRelease struct {
+				Suite string
+			}
+			if err := control.Unmarshal(&inRelease, bufio.NewReader(r)); err != nil {
 				log.Fatal(err)
 			}
-			if release.Values["Suite"] != "unstable" {
+			if inRelease.Suite != "unstable" {
 				continue
 			}
 
@@ -220,18 +222,16 @@ func main() {
 
 	log.Printf("Figuring out reverse build dependencies using dose-ceve(1). This might take a while\n")
 	if out, err := ceve.Output(); err == nil {
+		var doseCeves []struct {
+			Package string
+			Version version.Version
+		}
 		r := bufio.NewReader(strings.NewReader(string(out)))
-		for {
-			paragraph, err := control.ParseParagraph(r)
-			if paragraph == nil || err == io.EOF {
-				break
-			}
-			pkg := paragraph.Values["Package"]
-			ver, err := version.Parse(paragraph.Values["Version"])
-			if err != nil {
-				log.Fatalf("Cannot parse version number %q in dose-ceve(1) output: %v", paragraph.Values["Version"], err)
-			}
-			rebuild[pkg] = append(rebuild[pkg], ver)
+		if err := control.Unmarshal(&doseCeves, r); err != nil {
+			log.Fatal(err)
+		}
+		for _, doseCeve := range doseCeves {
+			rebuild[doseCeve.Package] = append(rebuild[doseCeve.Package], doseCeve.Version)
 		}
 	} else {
 		log.Printf("dose-ceve(1) failed (%v), falling back to interpreting Sources directly\n", err)
