@@ -37,6 +37,10 @@ var (
 		"",
 		"sbuild --dist= value (e.g. \"sid\"). Defaults to the Distribution: entry from the specified .changes file")
 
+	dist = flag.String("dist",
+		"",
+		"Distribution to look up reverse-build-dependencies from. Defaults to the Distribution: entry from the specified .changes file")
+
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
 
@@ -125,7 +129,7 @@ func main() {
 		"indextargets",
 		"--format",
 		"$(FILENAME)",
-		"Codename: sid",
+		"Codename: " + *dist,
 		"ShortDesc: Sources")
 	if lines, err := indexTargets.Output(); err == nil {
 		for _, line := range strings.Split(string(lines), "\n") {
@@ -139,7 +143,7 @@ func main() {
 			"indextargets",
 			"--format",
 			"$(FILENAME)",
-			"Codename: sid",
+			"Codename: " + *dist,
 			"ShortDesc: Packages")
 		lines, err = binaryIndexTargets.Output()
 		if err != nil {
@@ -170,9 +174,6 @@ func main() {
 			if err := control.Unmarshal(&inRelease, bufio.NewReader(r)); err != nil {
 				log.Fatal(err)
 			}
-			if inRelease.Suite != "unstable" {
-				continue
-			}
 
 			listsPrefix := listsPrefixRe.FindStringSubmatch(releasepath)
 			if len(listsPrefix) != 2 {
@@ -192,7 +193,7 @@ func main() {
 	}
 
 	if len(sourcesPaths) == 0 {
-		log.Fatal("Could not find InRelease file for unstable. Are you missing unstable in your /etc/apt/sources.list?")
+		log.Fatal("Could not find InRelease file for " + *dist + " . Are you missing " + *dist + " in your /etc/apt/sources.list?")
 	}
 
 	rebuild := make(map[string][]version.Version)
@@ -249,6 +250,11 @@ func main() {
 	if strings.TrimSpace(*sbuildDist) == "" {
 		*sbuildDist = changes.Distribution
 		log.Printf("Setting -sbuild_dist=%s (from .changes file)\n", *sbuildDist)
+	}
+
+	if strings.TrimSpace(*dist) == "" {
+		*dist = changes.Distribution
+		log.Printf("Setting -dist=%s (from .changes file)\n", *sbuildDist)
 	}
 
 	buildresults := make(map[string]bool)
