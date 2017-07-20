@@ -123,6 +123,15 @@ func main() {
 		log.Printf("    %s\n", deb)
 	}
 
+	if strings.TrimSpace(*dist) == "" {
+		*dist = changes.Distribution
+		// Rewrite unstable to sid, which apt-get indextargets (below) requires.
+		if *dist == "unstable" {
+			*dist = "sid"
+		}
+		log.Printf("Setting -dist=%s (from .changes file)\n", *dist)
+	}
+
 	var sourcesPaths []string
 	var packagesPaths []string
 	indexTargets := exec.Command("apt-get",
@@ -250,11 +259,6 @@ func main() {
 	if strings.TrimSpace(*sbuildDist) == "" {
 		*sbuildDist = changes.Distribution
 		log.Printf("Setting -sbuild_dist=%s (from .changes file)\n", *sbuildDist)
-	}
-
-	if strings.TrimSpace(*dist) == "" {
-		*dist = changes.Distribution
-		log.Printf("Setting -dist=%s (from .changes file)\n", *sbuildDist)
 	}
 
 	buildresults := make(map[string]bool)
