@@ -261,6 +261,7 @@ func main() {
 		log.Printf("Setting -sbuild_dist=%s (from .changes file)\n", *sbuildDist)
 	}
 
+	cnt := 1
 	buildresults := make(map[string]bool)
 	for src, versions := range rebuild {
 		sort.Sort(sort.Reverse(version.Slice(versions)))
@@ -280,7 +281,7 @@ func main() {
 		if err := os.MkdirAll(*logDir, 0755); err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("Building %s (commandline: %v)\n", target, cmd.Args)
+		log.Printf("Building package %d of %d: %s (commandline: %v)\n", cnt, len(rebuild), target, cmd.Args)
 		if *dryRun {
 			continue
 		}
