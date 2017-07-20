@@ -9,6 +9,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -61,7 +62,7 @@ func addReverseBuildDeps(sourcesPath string, binaries map[string]bool, rebuild m
 		sourcesPath)
 	var s *bufio.Reader
 	if lines, err := catFile.Output(); err == nil {
-		s = bufio.NewReader(strings.NewReader(string(lines)))
+		s = bufio.NewReader(bytes.NewReader(lines))
 	} else {
 		// Fallback for older versions of apt-get. See
 		// <20160111171230.GA17291@debian.org> for context.
@@ -86,6 +87,69 @@ func addReverseBuildDeps(sourcesPath string, binaries map[string]bool, rebuild m
 	return nil
 }
 
+func fallback(sourcesPaths []string, binaries []string) (map[string][]version.Version, error) {
+	bins := make(map[string]bool)
+	for _, bin := range binaries {
+		bins[bin] = true
+	}
+
+	rebuild := make(map[string][]version.Version)
+	for _, sourcesPath := range sourcesPaths {
+		if err := addReverseBuildDeps(sourcesPath, bins, rebuild); err != nil {
+			return nil, err
+		}
+	}
+	return rebuild, nil
+}
+
+func reverseBuildDeps(packagesPaths, sourcesPaths []string, binaries []string) (map[string][]version.Version, error) {
+	if _, err := exec.LookPath("dose-ceve"); err != nil {
+		log.Printf("dose-ceve(1) not found. Please install the dose-extra package for more accurate results. Falling back to interpreting Sources directly")
+		return fallback(sourcesPaths, binaries)
+	}
+
+	archOut, err := exec.Command("dpkg-architecture", "--query=DEB_BUILD_ARCH").Output()
+	if err != nil {
+		log.Fatal(err)
+	}
+	arch := strings.TrimSpace(string(archOut))
+
+	// TODO: Cache this output based on the .changes file. dose-ceve takes quite a while.
+	ceve := exec.Command(
+		"dose-ceve",
+		"--deb-native-arch="+arch,
+		"-T", "debsrc",
+		"-r", strings.Join(binaries, ","),
+		"-G", "pkg")
+	for _, packagesPath := range packagesPaths {
+		ceve.Args = append(ceve.Args, "deb://"+packagesPath)
+	}
+	for _, sourcesPath := range sourcesPaths {
+		ceve.Args = append(ceve.Args, "debsrc://"+sourcesPath)
+	}
+	ceve.Stderr = os.Stderr
+
+	log.Printf("Figuring out reverse build dependencies using dose-ceve(1). This might take a while")
+	out, err := ceve.Output()
+	if err != nil {
+		log.Printf("dose-ceve(1) failed (%v), falling back to interpreting Sources directly", err)
+		return fallback(sourcesPaths, binaries)
+	}
+	var doseCeves []struct {
+		Package string
+		Version version.Version
+	}
+	r := bufio.NewReader(bytes.NewReader(out))
+	if err := control.Unmarshal(&doseCeves, r); err != nil {
+		return nil, err
+	}
+	rebuild := make(map[string][]version.Version)
+	for _, doseCeve := range doseCeves {
+		rebuild[doseCeve.Package] = append(rebuild[doseCeve.Package], doseCeve.Version)
+	}
+	return rebuild, nil
+}
+
 func main() {
 	flag.Parse()
 
@@ -106,15 +170,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	binaries := make(map[string]bool)
 	var debs []string
 	for _, file := range changes.Files {
 		if filepath.Ext(file.Filename) == ".deb" {
 			debs = append(debs, file.Filename)
 		}
-	}
-	for _, binary := range changes.Binaries {
-		binaries[binary] = true
 	}
 
 	log.Printf(" - %d binary packages: %s\n", len(changes.Binaries), strings.Join(changes.Binaries, " "))
@@ -138,7 +198,7 @@ func main() {
 		"indextargets",
 		"--format",
 		"$(FILENAME)",
-		"Codename: " + *dist,
+		"Codename: "+*dist,
 		"ShortDesc: Sources")
 	if lines, err := indexTargets.Output(); err == nil {
 		for _, line := range strings.Split(string(lines), "\n") {
@@ -152,7 +212,7 @@ func main() {
 			"indextargets",
 			"--format",
 			"$(FILENAME)",
-			"Codename: " + *dist,
+			"Codename: "+*dist,
 			"ShortDesc: Packages")
 		lines, err = binaryIndexTargets.Output()
 		if err != nil {
@@ -205,51 +265,9 @@ func main() {
 		log.Fatal("Could not find InRelease file for " + *dist + " . Are you missing " + *dist + " in your /etc/apt/sources.list?")
 	}
 
-	rebuild := make(map[string][]version.Version)
-
-	archCmd := exec.Command(
-		"dpkg-architecture",
-		"--query=DEB_BUILD_ARCH")
-	archOut, err := archCmd.Output()
+	rebuild, err := reverseBuildDeps(packagesPaths, sourcesPaths, changes.Binaries)
 	if err != nil {
 		log.Fatal(err)
-	}
-	arch := strings.TrimSpace(string(archOut))
-
-	// TODO: Cache this output based on the .changes file. dose-ceve takes quite a while.
-	ceve := exec.Command(
-		"dose-ceve",
-		"--deb-native-arch="+arch,
-		"-T", "debsrc",
-		"-r", strings.Join(changes.Binaries, ","),
-		"-G", "pkg")
-	for _, packagesPath := range packagesPaths {
-		ceve.Args = append(ceve.Args, "deb://"+packagesPath)
-	}
-	for _, sourcesPath := range sourcesPaths {
-		ceve.Args = append(ceve.Args, "debsrc://"+sourcesPath)
-	}
-
-	log.Printf("Figuring out reverse build dependencies using dose-ceve(1). This might take a while\n")
-	if out, err := ceve.Output(); err == nil {
-		var doseCeves []struct {
-			Package string
-			Version version.Version
-		}
-		r := bufio.NewReader(strings.NewReader(string(out)))
-		if err := control.Unmarshal(&doseCeves, r); err != nil {
-			log.Fatal(err)
-		}
-		for _, doseCeve := range doseCeves {
-			rebuild[doseCeve.Package] = append(rebuild[doseCeve.Package], doseCeve.Version)
-		}
-	} else {
-		log.Printf("dose-ceve(1) failed (%v), falling back to interpreting Sources directly\n", err)
-		for _, sourcesPath := range sourcesPaths {
-			if err := addReverseBuildDeps(sourcesPath, binaries, rebuild); err != nil {
-				log.Fatal(err)
-			}
-		}
 	}
 
 	// TODO: add -recursive flag to also cover dependencies which are not DIRECT dependencies. use http://godoc.org/pault.ag/go/debian/control#OrderDSCForBuild (topsort) to build dependencies in the right order (saving CPU time).
