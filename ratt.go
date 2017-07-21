@@ -300,6 +300,7 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Printf("Building package %d of %d: %s (commandline: %v)\n", cnt, len(rebuild), target, cmd.Args)
+		cnt++
 		if *dryRun {
 			continue
 		}
