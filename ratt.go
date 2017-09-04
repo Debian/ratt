@@ -153,38 +153,48 @@ func reverseBuildDeps(packagesPaths, sourcesPaths []string, binaries []string) (
 func main() {
 	flag.Parse()
 
-	if flag.NArg() != 1 {
-		log.Fatalf("Usage: %s [options] <path-to-changes-file>\n", os.Args[0])
-	}
-
-	changesPath := flag.Arg(0)
-	log.Printf("Loading changes file %q\n", changesPath)
-
-	c, err := os.Open(changesPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer c.Close()
-	changes, err := control.ParseChanges(bufio.NewReader(c), changesPath)
-	if err != nil && err != io.EOF {
-		log.Fatal(err)
+	if flag.NArg() == 0 {
+		log.Fatalf("Usage: %s [options] <path-to-changes-file>...\n", os.Args[0])
 	}
 
 	var debs []string
-	for _, file := range changes.Files {
-		if filepath.Ext(file.Filename) == ".deb" {
-			debs = append(debs, file.Filename)
+	var binaries []string
+	var changesDist string
+	for i, changesPath := range flag.Args() {
+		log.Printf("Loading changes file %q\n", changesPath)
+		c, err := os.Open(changesPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer c.Close()
+		changes, err := control.ParseChanges(bufio.NewReader(c), changesPath)
+		if err != nil && err != io.EOF {
+			log.Fatal(err)
+		}
+
+		log.Printf(" - %d binary packages: %s\n", len(changes.Binaries), strings.Join(changes.Binaries, " "))
+
+		for _, file := range changes.Files {
+			if filepath.Ext(file.Filename) == ".deb" {
+				debs = append(debs, file.Filename)
+			}
+		}
+		binaries = append(binaries, changes.Binaries...)
+
+		if i == 0 {
+			changesDist = changes.Distribution
+		} else if changesDist != changes.Distribution {
+			log.Printf("%s has different distrution, but we will only consider %s\n", changes.Filename, changesDist)
 		}
 	}
 
-	log.Printf(" - %d binary packages: %s\n", len(changes.Binaries), strings.Join(changes.Binaries, " "))
-	log.Printf(" - corresponding .debs (will be injected when building):\n")
+	log.Printf("Corresponding .debs (will be injected when building):\n")
 	for _, deb := range debs {
 		log.Printf("    %s\n", deb)
 	}
 
 	if strings.TrimSpace(*dist) == "" {
-		*dist = changes.Distribution
+		*dist = changesDist
 		// Rewrite unstable to sid, which apt-get indextargets (below) requires.
 		if *dist == "unstable" {
 			*dist = "sid"
@@ -265,7 +275,7 @@ func main() {
 		log.Fatal("Could not find InRelease file for " + *dist + " . Are you missing " + *dist + " in your /etc/apt/sources.list?")
 	}
 
-	rebuild, err := reverseBuildDeps(packagesPaths, sourcesPaths, changes.Binaries)
+	rebuild, err := reverseBuildDeps(packagesPaths, sourcesPaths, binaries)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -275,7 +285,7 @@ func main() {
 	// TODO: what’s a good integration method for doing this in more setups, e.g. on a cloud provider or something? mapreri from #debian-qa says jenkins.debian.net is suitable.
 
 	if strings.TrimSpace(*sbuildDist) == "" {
-		*sbuildDist = changes.Distribution
+		*sbuildDist = changesDist
 		log.Printf("Setting -sbuild_dist=%s (from .changes file)\n", *sbuildDist)
 	}
 
