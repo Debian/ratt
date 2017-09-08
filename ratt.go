@@ -25,6 +25,15 @@ import (
 	"pault.ag/go/debian/version"
 )
 
+type buildResult struct {
+	src            string
+	version        *version.Version
+	err            error
+	recheckErr     error
+	logFile        string
+	recheckLogFile string
+}
+
 var (
 	logDir = flag.String("log_dir",
 		"buildlogs",
@@ -41,6 +50,10 @@ var (
 	dist = flag.String("dist",
 		"",
 		"Distribution to look up reverse-build-dependencies from. Defaults to the Distribution: entry from the specified .changes file")
+
+	recheck = flag.Bool("recheck",
+		false,
+		"Rebuild without new changes to check if the failures are really related")
 
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
@@ -289,59 +302,74 @@ func main() {
 		log.Printf("Setting -sbuild_dist=%s (from .changes file)\n", *sbuildDist)
 	}
 
+	if err := os.MkdirAll(*logDir, 0755); err != nil {
+		log.Fatal(err)
+	}
+
+	builder := &sbuild{
+		dist:      *sbuildDist,
+		logDir:    *logDir,
+		dryRun:    *dryRun,
+		extraDebs: debs,
+	}
 	cnt := 1
-	buildresults := make(map[string]bool)
+	buildresults := make(map[string](*buildResult))
 	for src, versions := range rebuild {
 		sort.Sort(sort.Reverse(version.Slice(versions)))
 		newest := versions[0]
-		target := fmt.Sprintf("%s_%s", src, newest)
-		// TODO: discard resulting package immediately?
-		args := []string{
-			"--arch-all",
-			"--dist=" + *sbuildDist,
-			"--nolog",
-			target,
-		}
-		for _, filename := range debs {
-			args = append(args, fmt.Sprintf("--extra-package=%s", filename))
-		}
-		cmd := exec.Command("sbuild", args...)
-		if err := os.MkdirAll(*logDir, 0755); err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("Building package %d of %d: %s (commandline: %v)\n", cnt, len(rebuild), target, cmd.Args)
+		log.Printf("Building package %d of %d: %s \n", cnt, len(rebuild), src)
 		cnt++
-		if *dryRun {
-			continue
+		result := builder.build(src, &newest)
+		if result.err != nil {
+			log.Printf("building %s failed: %v\n", src, result.err)
 		}
-		buildlog, err := os.Create(filepath.Join(*logDir, target))
-		if err != nil {
+		buildresults[src] = result
+	}
+
+	if *dryRun {
+		return
+	}
+
+	if *recheck {
+		log.Printf("Begin to rebuild all failed packages without new changes\n")
+		recheckBuilder := &sbuild{
+			dist:   *sbuildDist,
+			logDir: *logDir + "_recheck",
+			dryRun: false,
+		}
+		if err := os.MkdirAll(recheckBuilder.logDir, 0755); err != nil {
 			log.Fatal(err)
 		}
-		defer buildlog.Close()
-		cmd.Stdout = buildlog
-		cmd.Stderr = buildlog
-		if err := cmd.Run(); err != nil {
-			log.Printf("building %s failed: %v\n", target, err)
-			buildresults[target] = false
-		} else {
-			buildresults[target] = true
+		for src, result := range buildresults {
+			if result.err == nil {
+				continue
+			}
+			recheckResult := recheckBuilder.build(src, result.version)
+			result.recheckErr = recheckResult.err
+			result.recheckLogFile = recheckResult.logFile
+			if recheckResult.err != nil {
+				log.Printf("rebuilding %s without new packages failed: %v\n", src, recheckResult.err)
+			}
 		}
 	}
 
 	log.Printf("Build results:\n")
 	// Print all successful builds first (not as interesting), then failed ones.
-	for target, result := range buildresults {
-		if !result {
-			continue
+	for src, result := range buildresults {
+		if result.err == nil {
+			log.Printf("PASSED: %s\n", src)
 		}
-		log.Printf("PASSED: %s\n", target)
 	}
 
-	for target, result := range buildresults {
-		if result {
-			continue
+	for src, result := range buildresults {
+		if result.err != nil && result.recheckErr != nil {
+			log.Printf("FAILED: %s, but maybe unrelated to new changes (see %s and %s)\n",
+				src, result.logFile, result.recheckLogFile)
 		}
-		log.Printf("FAILED: %s (see %s)\n", target, filepath.Join(*logDir, target))
+	}
+	for src, result := range buildresults {
+		if result.err != nil && result.recheckErr == nil {
+			log.Printf("FAILED: %s (see %s)\n", src, result.logFile)
+		}
 	}
 }
