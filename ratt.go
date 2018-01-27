@@ -189,7 +189,7 @@ func main() {
 
 		for _, file := range changes.Files {
 			if filepath.Ext(file.Filename) == ".deb" {
-				debs = append(debs, file.Filename)
+				debs = append(debs, filepath.Join(filepath.Dir(changesPath), file.Filename))
 			}
 		}
 		binaries = append(binaries, changes.Binaries...)
