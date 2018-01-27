@@ -367,9 +367,16 @@ func main() {
 				src, result.logFile, result.recheckLogFile)
 		}
 	}
+
+	failures := false
 	for src, result := range buildresults {
 		if result.err != nil && result.recheckErr == nil {
 			log.Printf("FAILED: %s (see %s)\n", src, result.logFile)
+			failures = true
 		}
+	}
+
+	if failures {
+		os.Exit(1)
 	}
 }
