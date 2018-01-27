@@ -54,3 +54,83 @@ $ ratt golang-github-jacobsa-gcloud_0.0\~git20150709-2_amd64.changes
 ```
 
 ratt uses `sbuild(1)` to build packages, see https://wiki.debian.org/sbuild for instructions on how to set up sbuild. Be sure to add `--components=main,contrib,non-free` to the sbuild-createchroot line in case you want to deal with packages outside of main as well.
+
+# Adding build capacity to your setup
+
+By default, ratt installs a local ratt-builder server process, listening on `localhost:12311`.
+
+In this example, our remote computer has the hostname `x1`.
+
+## Using a persistent SSH port forwarding
+
+To use a remote ratt-builder server process, create a password-less SSH key,
+install the key on the remote computer and add a corresponding ssh_config(5)
+stanza:
+
+```shell
+REMOTE=x1
+KEY=$HOME/.ssh/$(hostname)-${REMOTE?}-ratt
+ssh-keygen -N '' -C "$(hostname)-${REMOTE?}-ratt" -f "${KEY?}"
+ssh-copy-id -i "${KEY?}" -f "${REMOTE?}"
+cat >> $HOME/.ssh/config <<EOT
+
+Host ${REMOTE?}-ratt
+	Hostname ${REMOTE?}
+	IdentityFile ${KEY?}
+EOT
+```
+
+Enable `ratt-autossh@.service`, which provides the UNIX socket [`$XDG_RUNTIME_DIR/ratt/x1-ratt`](https://manpages.debian.org/stretch/systemd/systemd.exec.5#ENVIRONMENT_VARIABLES_IN_SPAWNED_PROCESSES):
+
+```shell
+systemctl --user enable --now ratt-autossh@$(systemd-escape "${REMOTE?}-ratt").service
+```
+
+That’s it! `ratt(1)` will from now on distribute builds across `localhost` and `x1`.
+
+## Known issues
+
+1. gRPC busy-loops when the builder is not running on a reachable remote host: https://github.com/grpc/grpc-go/issues/1535
+
+## Defense in depth: restricting SSH access to local port forwardings
+
+To reduce the attack surface when your SSH key gets compromised, it is good practice to restrict the key on the remote end, i.e. edit ~/.ssh/authorized_keys to look like this:
+
+```
+command="/bin/sh -c 'sleep 9999d'",restrict,port-forwarding ssh-rsa AAAA… midna-x1-ratt
+```
+
+## Debugging
+
+### No autossh enabled (local-only)
+
+1. `ratt(1)` unsuccessfully tries to connect to `localhost:12500`, but `ratt-balancer-roundrobin.service` was not activated because `ratt-balancer-roundrobin.path` did not find any UNIX sockets in `$XDG_RUNTIME_DIR/ratt`
+2. `ratt(1)` connects to `localhost:12311`, which is always provided by `ratt-builder.service`.
+3. `ratt(1)` sends a `Semaphore.Acquire` request and connects to `localhost:12311` to run the build.
+
+### autossh enabled (local and remote)
+
+1. `ratt(1)` connects to localhost:12500, which is provided by `ratt-balancer-roundrobin.service`, which was activated by `ratt-balancer-roundrobin.path` because UNIX sockets appeared in `$XDG_RUNTIME_DIR/ratt`.
+2. `ratt(1)` sends a `Semaphore.Acquire` request. `ratt-balancer-roundrobin.service` forwards the request to the next resolved backend (i.e. configured port or discovered UNIX socket).
+3. `ratt(1)` connects to the backend which replied to run the build.
+
+## Using a custom transport
+
+If you want to use a different method of securing your transport layer, create
+your own setup which makes TCP ports available on localhost.
+
+Then, override -builder_ports on ratt-balancer-roundrobin.service:
+```
+% systemctl --user edit ratt-balancer-roundrobin
+[Service]
+ExecStart=
+ExecStart=/usr/bin/ratt-balancer-roundrobin -builder_ports=12311,12312
+```
+
+## Using a custom load-balancing strategy
+
+If round-robin balancing is not sufficient, implement your own load-balancing
+strategy by forwarding the Semaphore.Acquire request as per your requirements.
+
+An example use-case could be to spin up a cluster of virtual machines on a cloud
+provider on demand.

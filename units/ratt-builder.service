@@ -1,0 +1,11 @@
+[Unit]
+Description=ratt builder
+
+[Service]
+# TODO: it would be nice to run ratt-builder under an unprivileged user, but
+# that user would need permission for sbuild, and I am not sure how to set that
+# up programmatically.
+ExecStart=/home/michael/go/bin/ratt-builder
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=autossh for ratt on %I
+# TODO: after network?
+
+[Service]
+ExecStartPre=-/bin/rm -f "%t/ratt/%I"
+# TODO: get port from IANA. must be local, but static.
+# Send a message after 5s of idle, disconnect if no reply was received within 5s.
+ExecStart=/usr/bin/autossh \
+  -M 0 \
+  -S none \
+  -o ExitOnForwardFailure=yes \
+  -o BatchMode=yes \
+  -o ServerAliveInterval=5 \
+  -o ServerAliveCountMax=1 \
+  -L "%t/ratt/%I:localhost:12311" %I
+
+[Install]
+WantedBy=default.target

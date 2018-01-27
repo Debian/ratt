@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package pb;
+
+message StartRequest {
+  string build_id = 1;
+
+  // Debian distribution (e.g. sid) to build for. Defaults to sid if empty.
+  string distribution = 2;
+  
+  // Source package to build, in the form “package_version”.
+  string package = 3;
+
+  // Path names of extra .deb files to install when building. The path is
+  // relative to the build directory, i.e. files must have been created using
+  // WriteFile beforehand.
+  repeated string extra_package = 4;
+}
+
+message StartReply {
+}
+
+message WaitRequest {
+  string build_id = 1;
+}
+
+message WaitReply {
+  // exit_status is the exit status of sbuild(1).
+  uint32 exit_status = 1;
+}
+
+message WriteFileChunk {
+  string build_id = 1;
+  
+  // filename is only used on the first chunk and must not be set in any other
+  // chunk. To write different files, call WriteFile once per file.
+  string filename = 2;
+
+  bytes data = 3;
+}
+
+message WriteFileReply {
+}
+
+message TarRequest {
+  string build_id = 1;
+}
+
+message TarChunk {
+  bytes data = 1;
+}
+
+message CleanRequest {
+  string build_id = 1;
+
+  // spare_filenames are not cleaned up, under the assumption that the next
+  // build will need them, too.
+  repeated string spare_filename = 2;
+}
+
+message CleanReply {
+}
+
+service Build {
+  // WriteFile persists a stream of chunks into a file. Typically used for
+  // transferring extra packages.
+  rpc WriteFile(stream WriteFileChunk) returns (WriteFileReply) {}
+
+  // Start starts the package build. Returns as soon as the build was started,
+  // so call Wait right after. This design allows us to distinguish between
+  // in-progress builds and pending build requests on the client side.
+  rpc Start(StartRequest) returns (StartReply) {}
+
+  // Wait blocks until the build finished.
+  rpc Wait(WaitRequest) returns (WaitReply) {}
+
+  // Tar returns a tar archive of the build directory.
+  rpc Tar(TarRequest) returns (stream TarChunk) {}
+
+  // Clean empties the build directory (files useful for the next build can be
+  // spared) and removes it once no files are left.
+  rpc Clean(CleanRequest) returns (CleanReply) {}
+}

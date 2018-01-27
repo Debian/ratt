@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package pb;
+
+message GetRequest {
+}
+
+message GetReply {
+  int32 concurrent_builds = 1;
+}
+
+service Configuration {
+  // Get retrieves the server configuration, notably including the number of
+  // maximum concurrent builds (for load balancing).
+  rpc Get(GetRequest) returns (GetReply) {}
+}

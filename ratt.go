@@ -10,6 +10,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -20,18 +21,34 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/Debian/ratt/internal/pb"
+	"google.golang.org/grpc"
+
+	"golang.org/x/sync/errgroup"
 
 	"pault.ag/go/debian/control"
 	"pault.ag/go/debian/version"
 )
 
 type buildResult struct {
-	src            string
-	version        *version.Version
-	err            error
-	recheckErr     error
-	logFile        string
-	recheckLogFile string
+	err     error
+	logFile string
+}
+
+type category string
+
+const (
+	alreadyBroken category = "Already broken"
+	failing       category = "Failing"
+	passing       category = "Passing"
+)
+
+type categorizedResult struct {
+	category category
+	result   string
 }
 
 var (
@@ -164,6 +181,7 @@ func reverseBuildDeps(packagesPaths, sourcesPaths []string, binaries []string) (
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	flag.Parse()
 
 	if flag.NArg() == 0 {
@@ -295,8 +313,6 @@ func main() {
 
 	// TODO: add -recursive flag to also cover dependencies which are not DIRECT dependencies. use http://godoc.org/pault.ag/go/debian/control#OrderDSCForBuild (topsort) to build dependencies in the right order (saving CPU time).
 
-	// TODO: what’s a good integration method for doing this in more setups, e.g. on a cloud provider or something? mapreri from #debian-qa says jenkins.debian.net is suitable.
-
 	if strings.TrimSpace(*sbuildDist) == "" {
 		*sbuildDist = changesDist
 		log.Printf("Setting -sbuild_dist=%s (from .changes file)\n", *sbuildDist)
@@ -306,70 +322,138 @@ func main() {
 		log.Fatal(err)
 	}
 
-	builder := &sbuild{
-		dist:      *sbuildDist,
-		logDir:    *logDir,
-		dryRun:    *dryRun,
-		extraDebs: debs,
+	ctx := context.Background()
+
+	// TODO: flag. iterate through the specified servers, falling back.
+	conn, err := grpc.DialContext(context.Background(), "localhost:12500", grpc.WithInsecure(), grpc.WithBlock())
+	if err != nil {
+		log.Fatal(err)
 	}
-	cnt := 1
-	buildresults := make(map[string](*buildResult))
+	defer conn.Close()
+	configuration := pb.NewConfigurationClient(conn)
+
+	config, err := configuration.Get(ctx, &pb.GetRequest{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("connected to localhost:12500, builder config: %+v", config)
+
+	var (
+		concurrent   = make(chan struct{}, config.GetConcurrentBuilds())
+		eg           errgroup.Group
+		mu           sync.Mutex
+		buildresults = make(map[string]categorizedResult)
+		retry        = time.Tick(1 * time.Second)
+		birdseye     = birdseye{
+			out:    os.Stdout,
+			states: make([]birdseyeState, config.GetConcurrentBuilds()),
+		}
+	)
+	cnt := 0
 	for src, versions := range rebuild {
-		sort.Sort(sort.Reverse(version.Slice(versions)))
-		newest := versions[0]
-		log.Printf("Building package %d of %d: %s \n", cnt, len(rebuild), src)
 		cnt++
-		result := builder.build(src, &newest)
-		if result.err != nil {
-			log.Printf("building %s failed: %v\n", src, result.err)
-		}
-		buildresults[src] = result
-	}
-
-	if *dryRun {
-		return
-	}
-
-	if *recheck {
-		log.Printf("Begin to rebuild all failed packages without new changes\n")
-		recheckBuilder := &sbuild{
-			dist:   *sbuildDist,
-			logDir: *logDir + "_recheck",
-			dryRun: false,
-		}
-		if err := os.MkdirAll(recheckBuilder.logDir, 0755); err != nil {
-			log.Fatal(err)
-		}
-		for src, result := range buildresults {
-			if result.err == nil {
-				continue
+		cnt, src, versions := cnt, src, versions // copy
+		cnt--                                    // make the count zero indexed
+		eg.Go(func() error {
+			birdseye.status(cnt, stateInit)
+			defer birdseye.status(cnt, stateDone)
+			sort.Sort(sort.Reverse(version.Slice(versions)))
+			newest := versions[0]
+			target := fmt.Sprintf("%s_%s", src, newest)
+			job := struct {
+				build         *sbuild
+				recheck       bool
+				result        *buildResult
+				recheckResult *buildResult
+			}{
+				build: &sbuild{
+					dist:      *sbuildDist,
+					logDir:    *logDir,
+					dryRun:    *dryRun,
+					extraDebs: debs,
+					target:    target,
+				},
 			}
-			recheckResult := recheckBuilder.build(src, result.version)
-			result.recheckErr = recheckResult.err
-			result.recheckLogFile = recheckResult.logFile
-			if recheckResult.err != nil {
-				log.Printf("rebuilding %s without new packages failed: %v\n", src, recheckResult.err)
+			for {
+				birdseye.status(cnt, stateSleep)
+				concurrent <- struct{}{} // acquire semaphore
+				birdseye.status(cnt, stateRun)
+				result, err := job.build.build(ctx, pb.NewSemaphoreClient(conn))
+				birdseye.status(cnt, stateError)
+				if err != nil {
+					if isTemporary(err) {
+						<-retry      // rate-limit retries
+						<-concurrent // release semaphore
+						continue
+					}
+					return err // build could not be orchestrated
+				}
+				if !job.recheck {
+					job.result = result
+				} else {
+					job.recheckResult = result
+				}
+				// build has succeeded or failed
+				if result.err != nil {
+					if *recheck && !job.recheck {
+						job.recheck = true
+						job.build.extraDebs = nil
+						job.build.logDir += "_recheck"
+						<-concurrent // release semaphore
+						continue
+					}
+				}
+				mu.Lock()
+				if job.recheck && job.recheckResult.err != nil {
+					buildresults[src] = categorizedResult{alreadyBroken, fmt.Sprintf("FAILED: %s, but maybe unrelated to new changes (see %s and %s)",
+						src, job.result.logFile, job.recheckResult.logFile)}
+				} else if job.result.err != nil {
+					buildresults[src] = categorizedResult{failing, fmt.Sprintf("FAILED: %s (see %s)", src, job.result.logFile)}
+				} else {
+					buildresults[src] = categorizedResult{passing, fmt.Sprintf("PASSED: %s", src)}
+				}
+				mu.Unlock()
+				<-concurrent // release semaphore
+				break
+			}
+			return nil
+		})
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(1 * time.Second):
+				birdseye.print()
 			}
 		}
+	}()
+	if err := eg.Wait(); err != nil {
+		log.Fatal(err)
 	}
+	close(done)
+
+	birdseye.flush()
 
 	log.Printf("Build results:\n")
-	// Print all successful builds first (not as interesting), then failed ones.
-	for src, result := range buildresults {
-		if result.err == nil {
-			log.Printf("PASSED: %s\n", src)
-		}
-	}
+	counts := make(map[category]int)
+	for _, category := range []category{passing, alreadyBroken, failing} {
+		for _, result := range buildresults {
+			if result.category != category {
+				continue
+			}
 
-	for src, result := range buildresults {
-		if result.err != nil && result.recheckErr != nil {
-			log.Printf("FAILED: %s, but maybe unrelated to new changes (see %s and %s)\n",
-				src, result.logFile, result.recheckLogFile)
+			log.Println(result.result)
+			counts[category]++
 		}
 	}
-	for src, result := range buildresults {
-		if result.err != nil && result.recheckErr == nil {
-			log.Printf("FAILED: %s (see %s)\n", src, result.logFile)
+	var parts []string
+	for _, category := range []category{passing, alreadyBroken, failing} {
+		if cnt, ok := counts[category]; ok {
+			parts = append(parts, fmt.Sprintf("%d %s", cnt, category))
 		}
 	}
+	log.Println(strings.Join(parts, ", "))
 }

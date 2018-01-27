@@ -1,0 +1,8 @@
+[Unit]
+Description=ratt round robin balancer
+
+[Path]
+DirectoryNotEmpty=%t/ratt
+MakeDirectory=true
+DirectoryMode=0700
+Unit=ratt-balancer-roundrobin.service

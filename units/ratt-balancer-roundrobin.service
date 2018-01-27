@@ -1,0 +1,7 @@
+[Unit]
+Description=ratt round robin balancer
+
+[Service]
+# Balance builds between the local builder and all enabled remote builders
+# (e.g. via ratt-autossh@.service).
+ExecStart=/home/michael/go/bin/ratt-balancer-roundrobin -builder_ports=12311 "-socket_dir=%t/ratt"

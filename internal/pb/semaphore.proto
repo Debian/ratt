@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package pb;
+
+message AcquireRequest {  
+}
+
+message AcquireReply {
+  string build_id = 1;
+
+  // host:port tuple to Dial for subsequent requests.
+  string host_port = 2;
+}
+
+message ReleaseRequest {
+  string build_id = 1;
+}
+
+message ReleaseReply {
+}
+
+service Semaphore {
+  rpc Acquire(AcquireRequest) returns (stream AcquireReply) {}
+
+  rpc Release(ReleaseRequest) returns (ReleaseReply) {}
+}
