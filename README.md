@@ -57,7 +57,7 @@ ratt uses `sbuild(1)` to build packages, see https://wiki.debian.org/sbuild for 
 
 # Targeting a different suite
 
-Imagine you're running Debian stable on your machine, but you're working on a package that should be built against Debian unstable (ie. sid). Here is what you're likely to get at the first try:
+Imagine you’re running Debian stable on your machine, but you’re working on a package for Debian unstable (“sid”). Unless you already have configured a corresponding `sources.list` entry for sid, you will encounter an error message like this:
 
 ```
 $ ratt golang-google-grpc_1.11.0-1_amd64.changes
@@ -69,9 +69,7 @@ $ ratt golang-google-grpc_1.11.0-1_amd64.changes
 2019/01/19 10:44:34 Could not find InRelease file for sid . Are you missing sid in your /etc/apt/sources.list?
 ```
 
-What happens here is that ratt looks into the `.changes` file, which indicates that this package belongs to sid. Ratt then tries to resolve the reverse build dependencies against sid, using `apt(1)` as configured on the system. Which means that apt must have the sid suite in its `sources.list`, and in this example it isn't. Failure ensues.
-
-The most direct approach to solve that is to add sid to your `/etc/apt/sources.list` file, then set `Default-Release` to stable, to prevent apt from using it. It should look like this:
+The most direct solution is to add sid to your `/etc/apt/sources.list` file, then set `Default-Release` to stable, so that apt prefers the same packages as before your addition:
 
 ```
 # echo 'deb http://deb.debian.org/debian sid main' >> /etc/apt/sources.list
@@ -80,10 +78,8 @@ The most direct approach to solve that is to add sid to your `/etc/apt/sources.l
 $ ratt ...
 ```
 
-Another approach is to use `chdist(1)`, a tool that allows to create and maintain different apt trees for different suites. Assuming that you have a sid distribution ready in your `~/.chdist`, you can then use it by setting the environment variable `APT_CONFIG`:
+An alternative solution is to use `chdist(1)`, a tool that allows to create and maintain different apt trees for different suites. Assuming that you have a sid distribution ready in your `~/.chdist`, you can then use it by setting the environment variable `APT_CONFIG`:
 
 ```
 APT_CONFIG=~/.chdist/sid/etc/apt/apt.conf ratt ...
 ```
-
-At last, don't forget that you can easily target any suite that you want using the `-dist` argument of ratt.
