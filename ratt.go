@@ -25,6 +25,16 @@ import (
 	"pault.ag/go/debian/version"
 )
 
+func filter(m map[string][]version.Version, f func(string) bool) map[string][]version.Version {
+	mf := make(map[string][]version.Version, 0)
+	for k, v := range m {
+		if f(k) {
+			mf[k] = v
+		}
+	}
+	return mf
+}
+
 type buildResult struct {
 	src            string
 	version        *version.Version
@@ -42,6 +52,14 @@ var (
 	dryRun = flag.Bool("dry_run",
 		false,
 		"Print sbuild command lines, but do not actually build the reverse-build-dependencies")
+
+	include = flag.String("include",
+		"",
+		"Only build packages which match the supplied regex")
+
+	exclude = flag.String("exclude",
+		"",
+		"Do not build packages which match the supplied regex")
 
 	sbuildDist = flag.String("sbuild_dist",
 		"",
@@ -292,6 +310,28 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("Found %d reverse build dependencies\n", len(rebuild))
+
+	if *include != "" {
+		filtered, err := regexp.Compile(*include)
+		if err != nil {
+			log.Fatal(err)
+		}
+		rebuild = filter(rebuild, func(v string) bool {
+			return filtered.MatchString(v)
+		})
+		log.Printf("Based on the supplied include filter, will only build %d reverse build dependencies\n", len(rebuild))
+	}
+	if *exclude != "" {
+		filtered, err := regexp.Compile(*exclude)
+		if err != nil {
+			log.Fatal(err)
+		}
+		rebuild = filter(rebuild, func(v string) bool {
+			return !filtered.MatchString(v)
+		})
+		log.Printf("Based on the supplied exclude filter, will only build %d reverse build dependencies\n", len(rebuild))
+	}
 
 	// TODO: add -recursive flag to also cover dependencies which are not DIRECT dependencies. use http://godoc.org/pault.ag/go/debian/control#OrderDSCForBuild (topsort) to build dependencies in the right order (saving CPU time).
 
@@ -326,6 +366,16 @@ func main() {
 		buildresults[src] = result
 	}
 
+	var toInclude []string
+	for src, result := range buildresults {
+		if result.err != nil {
+			toInclude = append(toInclude, strings.ReplaceAll(src, "+", "\\+"))
+		}
+	}
+	if len(toInclude) > 0 {
+		log.Printf("%d packages failed the first pass; you can rerun ratt only for them passing the option -include '^(%s)$'\n", len(toInclude), strings.Join(toInclude, "|"))
+	}
+
 	if *dryRun {
 		return
 	}
@@ -340,15 +390,18 @@ func main() {
 		if err := os.MkdirAll(recheckBuilder.logDir, 0755); err != nil {
 			log.Fatal(err)
 		}
+		cnt := 1
 		for src, result := range buildresults {
 			if result.err == nil {
 				continue
 			}
+			log.Printf("Rebuilding package %d of %d: %s \n", cnt, len(toInclude), src)
+			cnt++
 			recheckResult := recheckBuilder.build(src, result.version)
 			result.recheckErr = recheckResult.err
 			result.recheckLogFile = recheckResult.logFile
 			if recheckResult.err != nil {
-				log.Printf("rebuilding %s without new packages failed: %v\n", src, recheckResult.err)
+				log.Printf("rebuilding %s without new changes failed: %v\n", src, recheckResult.err)
 			}
 		}
 	}
