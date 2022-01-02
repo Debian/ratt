@@ -73,6 +73,7 @@ The most direct solution is to add sid to your `/etc/apt/sources.list` file, the
 
 ```
 # echo 'deb http://deb.debian.org/debian sid main' >> /etc/apt/sources.list
+# echo 'deb-src http://deb.debian.org/debian sid main' >> /etc/apt/sources.list
 # echo 'APT::Default-Release "stable";' >> /etc/apt/apt.conf
 # apt update
 $ ratt ...
