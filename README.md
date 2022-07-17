@@ -6,24 +6,25 @@ The intended use-case is, for example, to package a new snapshot of a Go library
 
 # Installation (from git, for hacking on ratt)
 
-Please install ratt from Debian. In case you want to hack on ratt, you can use the following commands to install Go, download ratt from git and compile/install it into your `$GOPATH`:
+Please install ratt from Debian. In case you want to hack on ratt, you can use the following commands to install Go, download ratt from git and compile/install it:
 
 ```bash
 sudo apt-get install golang-go
-export GOPATH=~/gocode
-go get -u github.com/Debian/ratt
+git clone https://github.com/Debian/ratt
+cd ratt
+go install
 ```
 
-Start the resulting binary in `~/gocode/bin/ratt`:
+Start the resulting binary in `~/go/bin/ratt`:
 
 ```bash
-~/gocode/bin/ratt -help
+~/go/bin/ratt -help
 ```
 
 After making changes to the code, to recompile and install it again, use:
 
 ```bash
-go install github.com/Debian/ratt
+go install
 ```
 
 # Usage
