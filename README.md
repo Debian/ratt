@@ -85,3 +85,21 @@ An alternative solution is to use `chdist(1)`, a tool that allows to create and 
 ```
 APT_CONFIG=~/.chdist/sid/etc/apt/apt.conf ratt ...
 ```
+
+# Restricting the set of packages that will be built
+
+In some cases there are many build dependencies; to focus on a smaller set of packages, invoke ratt with the `-include` / `-exclude` options.
+
+To only build selected packages, use:
+
+```
+ratt -recheck -include '^(hwloc|fltk1.3|wcslib|ccfits|qevercloud|libstxxl|caffe|frobby|starpu)$' ../doxygen_1.8.17-1_amd64.changes
+```
+
+To exclude certain packages (for example those with longer build times):
+
+```
+ratt -recheck -exclude '^(gcc-9|gcc-8|llvm-toolchain-10|libreoffice|trilinos|llvm-toolchain-9|llvm-toolchain-8|llvm-toolchain-7|gcc-snapshot|gcc-10|deal.ii|kodi|vg|qgis|openms|siconos|ball|gtg-trace|libsbml|dcmtk|gromacs|gudhi|kicad|libpwiz)$' ../doxygen_1.8.17-1_amd64.changes
+```
+
+**Note**: you need to escape the `+` sign in package names as in `dbus-c\+\+` to avoid messing up the regexp expression.
