@@ -133,6 +133,29 @@ func fallback(sourcesPaths []string, binaries []string) (map[string][]version.Ve
 	return rebuild, nil
 }
 
+func resolveAptListFile(indexFilePath string) (string, error) {
+	cmd := exec.Command("/usr/lib/apt/apt-helper", "cat-file", indexFilePath)
+	resolvedContent, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to read apt file %s: %w", indexFilePath, err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "apt-index-resolved-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	if _, err := tmpFile.Write(resolvedContent); err != nil {
+		tmpFile.Close()
+		return "", fmt.Errorf("failed to write file content: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return "", fmt.Errorf("failed to close temp file: %w", err)
+	}
+	return tmpFile.Name(), nil
+}
+
 func reverseBuildDeps(packagesPaths, sourcesPaths []string, binaries []string) (map[string][]version.Version, error) {
 	if _, err := exec.LookPath("dose-ceve"); err != nil {
 		log.Printf("dose-ceve(1) not found. Please install the dose-extra package for more accurate results. Falling back to interpreting Sources directly")
@@ -152,11 +175,25 @@ func reverseBuildDeps(packagesPaths, sourcesPaths []string, binaries []string) (
 		"-T", "debsrc",
 		"-r", strings.Join(binaries, ","),
 		"-G", "pkg")
+
 	for _, packagesPath := range packagesPaths {
-		ceve.Args = append(ceve.Args, "deb://"+packagesPath)
+		resolvedPath, err := resolveAptListFile(packagesPath)
+		if err != nil {
+			log.Printf("failed to resolve %s: %v", packagesPath, err)
+			continue
+		}
+		defer os.Remove(resolvedPath)
+		ceve.Args = append(ceve.Args, "deb://"+resolvedPath)
 	}
+
 	for _, sourcesPath := range sourcesPaths {
-		ceve.Args = append(ceve.Args, "debsrc://"+sourcesPath)
+		resolvedPath, err := resolveAptListFile(sourcesPath)
+		if err != nil {
+			log.Printf("failed to resolve %s: %v", sourcesPath, err)
+			continue
+		}
+		defer os.Remove(resolvedPath)
+		ceve.Args = append(ceve.Args, "debsrc://"+resolvedPath)
 	}
 	ceve.Stderr = os.Stderr
 
