@@ -73,6 +73,10 @@ var (
 		false,
 		"Rebuild without new changes to check if the failures are really related")
 
+	useChdist = flag.String("chdist",
+		"",
+		"Use chdist's apt-get indextargets to get sources and packages files")
+
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
 
@@ -280,6 +284,21 @@ func getIndexTargets(cmdName string, args []string) ([]string, error) {
 	return paths, nil
 }
 
+func getChdistIndexPaths(dist, chdist string) ([]string, []string) {
+	baseArgs := []string{"apt-get", chdist, "indextargets", "--format", "$(FILENAME)", "Codename: " + dist}
+
+	sources, err := getIndexTargets("chdist", append(baseArgs, "ShortDesc: Sources"))
+	if err != nil {
+		log.Fatalf("Failed to get sources files: %v", err)
+	}
+
+	packages, err := getIndexTargets("chdist", append(baseArgs, "ShortDesc: Packages"))
+	if err != nil {
+		log.Fatalf("Failed to get packages files: %v", err)
+	}
+	return sources, packages
+}
+
 func getAptIndexPaths(dist string) ([]string, []string) {
 	baseArgs := []string{"indextargets", "--format", "$(FILENAME)", "Codename: " + dist}
 
@@ -349,10 +368,20 @@ func main() {
 	}
 
 	var sourcesPaths, packagesPaths []string
-	sourcesPaths, packagesPaths = getAptIndexPaths(*dist)
+
+	if *useChdist != "" {
+		sourcesPaths, packagesPaths = getChdistIndexPaths(*dist, *useChdist)
+	} else {
+		sourcesPaths, packagesPaths = getAptIndexPaths(*dist)
+	}
 
 	if len(sourcesPaths) == 0 {
-		log.Fatal("Could not find InRelease file for " + *dist + " . Are you missing " + *dist + " in your /etc/apt/sources.list?")
+		if *useChdist != "" {
+			sourcesListPath := filepath.Join(os.Getenv("HOME"), ".chdist", *useChdist, "etc/apt/sources.list")
+			log.Fatalf("Could not find source index files for %q using chdist %q. Are you missing this distribution in %s?", *dist, *useChdist, sourcesListPath)
+		} else {
+			log.Fatal("Could not find InRelease file for " + *dist + " . Are you missing " + *dist + " in your /etc/apt/sources.list?")
+		}
 	}
 
 	rebuild, err := reverseBuildDeps(packagesPaths, sourcesPaths, binaries)
