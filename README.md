@@ -103,3 +103,49 @@ ratt -recheck -exclude '^(gcc-9|gcc-8|llvm-toolchain-10|libreoffice|trilinos|llv
 ```
 
 **Note**: you need to escape the `+` sign in package names as in `dbus-c\+\+` to avoid messing up the regexp expression.
+
+
+# Using `-chdist` to target multiple Debian suites
+
+Instead of modifying your system-wide `/etc/apt/sources.list`, you can use
+`chdist` to simulate isolated APT environments per suite.
+
+1. Create a named distribution profile:
+
+    ```
+    chdist create <DIST> <URL> <RELEASE> <SECTIONS>
+    ```
+
+    A common example:
+
+    ```
+    chdist create bookworm http://deb.debian.org/debian bookworm main
+    ```
+
+    This creates a chdist environment named unstable.
+
+2. Update the APT metadata
+
+    After creating the distribution, update it:
+
+    ```
+    chdist bookworm apt-get update
+    ```
+
+    This step is mandatory, it downloads the package index files (*_Sources,
+    *_Packages, etc.) that ratt will later use
+
+3. Run ratt with the `-chdist` option
+
+    Once the chdist environment is set up and updated, you can run ratt with the
+    `-chdist` flag pointing to the name of the distribution:
+
+    ```
+    ratt -chdist bookworm yourpackage_*.changes
+    ```
+
+    This will use the index files from the chdist environment located at
+    `~/.chdist/bookworm`, instead of the host system's APT config.
+
+    **Note**: The name passed to `-chdist` refers to the profile created via `chdist
+    create`
