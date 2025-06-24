@@ -218,6 +218,84 @@ func reverseBuildDeps(packagesPaths, sourcesPaths []string, binaries []string) (
 	return rebuild, nil
 }
 
+func fallbackIndexPaths() ([]string, []string) {
+	var sourcesPaths, packagesPaths []string
+
+	releaseMatches, err := filepath.Glob("/var/lib/apt/lists/*_InRelease")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, releasepath := range releaseMatches {
+		r, err := os.Open(releasepath)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		var inRelease struct{ Suite string }
+		if err := control.Unmarshal(&inRelease, bufio.NewReader(r)); err != nil {
+			r.Close()
+			log.Fatal(err)
+		}
+		r.Close()
+
+		listsPrefix := listsPrefixRe.FindStringSubmatch(releasepath)
+		if len(listsPrefix) != 2 {
+			log.Fatalf("release file path %q does not match regexp %q\n", releasepath, listsPrefixRe)
+		}
+		prefix := listsPrefix[1]
+
+		sources, err := filepath.Glob(fmt.Sprintf("/var/lib/apt/lists/%s_*_Sources", prefix))
+		if err != nil {
+			log.Fatal(err)
+		}
+		sourcesPaths = append(sourcesPaths, sources...)
+
+		packages, err := filepath.Glob(fmt.Sprintf("/var/lib/apt/lists/%s_*_Packages", prefix))
+		if err != nil {
+			log.Fatal(err)
+		}
+		packagesPaths = append(packagesPaths, packages...)
+	}
+
+	return sourcesPaths, packagesPaths
+}
+
+func getIndexTargets(cmdName string, args []string) ([]string, error) {
+	var stderr bytes.Buffer
+
+	cmd := exec.Command(cmdName, args...)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %v\nstderr:\n%s", cmd.Args, stderr.String())
+	}
+
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			paths = append(paths, trimmed)
+		}
+	}
+	return paths, nil
+}
+
+func getAptIndexPaths(dist string) ([]string, []string) {
+	baseArgs := []string{"indextargets", "--format", "$(FILENAME)", "Codename: " + dist}
+
+	sources, err := getIndexTargets("apt-get", append(baseArgs, "ShortDesc: Sources"))
+	if err == nil {
+		packages, err := getIndexTargets("apt-get", append(baseArgs, "ShortDesc: Packages"))
+		if err != nil {
+			log.Fatalf("Could not get packages files: %v", err)
+		}
+		return sources, packages
+	}
+
+	// Fallback: older apt-get
+	return fallbackIndexPaths()
+}
+
 func main() {
 	flag.Parse()
 
@@ -270,74 +348,8 @@ func main() {
 		log.Printf("Setting -dist=%s (from .changes file)\n", *dist)
 	}
 
-	var sourcesPaths []string
-	var packagesPaths []string
-	indexTargets := exec.Command("apt-get",
-		"indextargets",
-		"--format",
-		"$(FILENAME)",
-		"Codename: "+*dist,
-		"ShortDesc: Sources")
-	if lines, err := indexTargets.Output(); err == nil {
-		for _, line := range strings.Split(string(lines), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if trimmed != "" {
-				sourcesPaths = append(sourcesPaths, line)
-			}
-		}
-		binaryIndexTargets := exec.Command(
-			"apt-get",
-			"indextargets",
-			"--format",
-			"$(FILENAME)",
-			"Codename: "+*dist,
-			"ShortDesc: Packages")
-		lines, err = binaryIndexTargets.Output()
-		if err != nil {
-			log.Fatal("Could not get packages files using %+v: %v", binaryIndexTargets.Args, err)
-		}
-		for _, line := range strings.Split(string(lines), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if trimmed != "" {
-				packagesPaths = append(packagesPaths, line)
-			}
-		}
-	} else {
-		// Fallback for older versions of apt-get. See
-		// https://bugs.debian.org/801594 for context.
-		releaseMatches, err := filepath.Glob("/var/lib/apt/lists/*_InRelease")
-		if err != nil {
-			log.Fatal(err)
-		}
-		for _, releasepath := range releaseMatches {
-			r, err := os.Open(releasepath)
-			if err != nil {
-				log.Fatal(err)
-			}
-			defer r.Close()
-			var inRelease struct {
-				Suite string
-			}
-			if err := control.Unmarshal(&inRelease, bufio.NewReader(r)); err != nil {
-				log.Fatal(err)
-			}
-
-			listsPrefix := listsPrefixRe.FindStringSubmatch(releasepath)
-			if len(listsPrefix) != 2 {
-				log.Fatalf("release file path %q does not match regexp %q\n", releasepath, listsPrefixRe)
-			}
-			sourceMatches, err := filepath.Glob(fmt.Sprintf("/var/lib/apt/lists/%s_*_Sources", listsPrefix[1]))
-			if err != nil {
-				log.Fatal(err)
-			}
-			sourcesPaths = append(sourcesPaths, sourceMatches...)
-			packagesMatches, err := filepath.Glob(fmt.Sprintf("/var/lib/apt/lists/%s_*_Packages", listsPrefix[1]))
-			if err != nil {
-				log.Fatal(err)
-			}
-			packagesPaths = append(packagesPaths, packagesMatches...)
-		}
-	}
+	var sourcesPaths, packagesPaths []string
+	sourcesPaths, packagesPaths = getAptIndexPaths(*dist)
 
 	if len(sourcesPaths) == 0 {
 		log.Fatal("Could not find InRelease file for " + *dist + " . Are you missing " + *dist + " in your /etc/apt/sources.list?")
