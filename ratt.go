@@ -10,10 +10,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,8 +80,86 @@ var (
 		"",
 		"Use chdist's apt-get indextargets to get sources and packages files")
 
+	skipFTBFS = flag.Bool("skip_ftbfs",
+		false,
+		"Filter out packages tagged as FTBFS from udd.debian.org")
+
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
+
+type ftbfsBug struct {
+	Source string `json:"source"`
+}
+
+func getFTBFSFromUDD(codename string) (map[string]struct{}, error) {
+	baseURL := "https://udd.debian.org/bugs/"
+	params := url.Values{
+		"release":             {codename},
+		"ftbfs":               {"only"},
+		"notmain":             {"ign"},
+		"merged":              {""},
+		"fnewerval":           {"7"},
+		"flastmodval":         {"7"},
+		"rc":                  {"1"},
+		"sortby":              {"id"},
+		"caffected_packages":  {"1"},
+		"sorto":               {"asc"},
+		"format":              {"json"},
+	}
+
+	fullURL := baseURL + "?" + params.Encode()
+
+	resp, err := http.Get(fullURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch FTBFS list: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("received non-OK response from UDD: %s", resp.Status)
+	}
+
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	var bugs []ftbfsBug
+	if err := json.Unmarshal(body, &bugs); err != nil {
+		return nil, fmt.Errorf("failed to decode FTBFS JSON: %w", err)
+	}
+
+	ftbfsSet := make(map[string]struct{}, len(bugs))
+	for _, bug := range bugs {
+		ftbfsSet[bug.Source] = struct{}{}
+	}
+
+	return ftbfsSet, nil
+}
+
+func fetchCodenameFromDist(dist string) (string, error) {
+	url := fmt.Sprintf("http://deb.debian.org/debian/dists/%s/Release", dist)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch Release file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "Codename: ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "Codename: ")), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading Release file: %w", err)
+	}
+
+	return "", fmt.Errorf("unable to find Codename field in Release file for %s", dist)
+}
 
 func dependsOn(src control.SourceIndex, binaries map[string]bool) bool {
 	buildDepends := src.GetBuildDepends()
@@ -388,6 +469,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	if *skipFTBFS {
+		codename, err := fetchCodenameFromDist(*dist)
+		if err != nil {
+			log.Fatalf("Could not determine codename for dist %s: %v", *dist, err)
+		}
+
+		ftbfsMap, err := getFTBFSFromUDD(codename)
+		if err != nil {
+			log.Printf("Warning: could not fetch FTBFS list from udd.debian.org: %v", err)
+		} else {
+			for pkg := range rebuild {
+				if _, ok := ftbfsMap[pkg]; ok {
+					log.Printf("Skipping package %q - is tagged as FTBFS according to udd.debian.org", pkg)
+					delete(rebuild, pkg)
+				}
+			}
+		}
+	}
+
 	log.Printf("Found %d reverse build dependencies\n", len(rebuild))
 
 	if *include != "" {
