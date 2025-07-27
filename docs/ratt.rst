@@ -18,7 +18,9 @@ SYNOPSIS
    ratt [-h] [-dry_run] [-recheck] [-skip_ftbfs]
         [-include REGEX] [-exclude REGEX]
         [-dist DIST] [-sbuild_dist DIST]
-        [-log_dir DIR] [-chdist NAME] <file>.changes
+        [-log_dir DIR] [-chdist NAME]
+        [-direct-rdeps] [-rdeps-depth N]
+        <file>.changes
 
 DESCRIPTION
 ===========
@@ -64,6 +66,15 @@ OPTIONS
 **-skip_ftbfs**
  Skip packages marked as FTBFS on udd.debian.org.
 
+**-direct-rdeps**
+ Limit the reverse dependency analysis to packages that directly Build-Depend
+ on the target. Equivalent to using ``-rdeps-depth=2``.
+
+**-rdeps-depth** *N*
+ Set the maximum depth for reverse dependency resolution (via
+ ``dose-ceve(1)``).  If unset, all the transitive reverse dependencies will be
+ included.  See the ``--depth`` option in ``dose-ceve(1)`` manpage to see
+ more details.
 
 Using `-chdist` for Suite Isolation
 ===================================
@@ -107,6 +118,10 @@ Dry run::
 Skip packages known FTBFS::
 
   $ ratt -skip_ftbfs -chdist sid yourpackage_*.changes
+
+Limit to direct reverse build-dependencies only::
+
+  $ ratt -direct-rdeps yourpackage_*.changes
 
 Filter specific packages::
 
