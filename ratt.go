@@ -84,6 +84,14 @@ var (
 		false,
 		"Filter out packages tagged as FTBFS from udd.debian.org")
 
+	directRdeps = flag.Bool("direct-rdeps",
+		false,
+		"Limit reverse dependency analysis to packages that directly Build-Depend on the target. Equivalent to --rdeps-depth=2")
+
+	rdepsDepth = flag.Int("rdeps-depth",
+		0,
+		"Set the maximum depth for reverse dependency resolution. For more details, see the --depth option in the dose-ceve(1) manpage")
+
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
 
@@ -260,6 +268,17 @@ func reverseBuildDeps(packagesPaths, sourcesPaths []string, binaries []string) (
 		"-T", "debsrc",
 		"-r", strings.Join(binaries, ","),
 		"-G", "pkg")
+
+	if *directRdeps && *rdepsDepth != 0 && *rdepsDepth != 2 {
+		log.Printf("Warning: --direct-rdeps is ignored because --rdeps-depth=%d is also set", *rdepsDepth)
+	}
+	if *directRdeps && *rdepsDepth == 0 {
+		*rdepsDepth = 2
+	}
+	if *rdepsDepth > 0 {
+		log.Printf("Using --depth=%d for dose-ceve(1) reverse dependency closure", *rdepsDepth)
+		ceve.Args = append(ceve.Args, fmt.Sprintf("--depth=%d", *rdepsDepth))
+	}
 
 	for _, packagesPath := range packagesPaths {
 		resolvedPath, err := resolveAptListFile(packagesPath)
