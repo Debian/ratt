@@ -92,8 +92,18 @@ var (
 		0,
 		"Set the maximum depth for reverse dependency resolution. For more details, see the --depth option in the dose-ceve(1) manpage")
 
+	jsonOutput = flag.Bool("json",
+		false,
+		"Output results in JSON format (currently only works in combination with -dry_run)")
+
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
+
+type dryRunBuild struct {
+	Package       string `json:"package"`
+	Version       string `json:"version"`
+	SbuildCommand string `json:"sbuild_command"`
+}
 
 type ftbfsBug struct {
 	Source string `json:"source"`
@@ -418,6 +428,10 @@ func getAptIndexPaths(dist string) ([]string, []string) {
 func main() {
 	flag.Parse()
 
+	if *jsonOutput && !*dryRun {
+		log.Fatal("-json can only be used together with -dry_run")
+	}
+
 	if flag.NArg() == 0 {
 		log.Fatalf("Usage: %s [options] <path-to-changes-file>...\n", os.Args[0])
 	}
@@ -552,6 +566,7 @@ func main() {
 	}
 	cnt := 1
 	buildresults := make(map[string](*buildResult))
+	var dryRunBuilds []dryRunBuild
 	for src, versions := range rebuild {
 		sort.Sort(sort.Reverse(version.Slice(versions)))
 		newest := versions[0]
@@ -562,6 +577,15 @@ func main() {
 			log.Printf("building %s failed: %v\n", src, result.err)
 		}
 		buildresults[src] = result
+
+		if *dryRun {
+			cmd := builder.buildCommandLine(src, &newest)
+			dryRunBuilds = append(dryRunBuilds, dryRunBuild{
+				Package:       src,
+				Version:       newest.String(),
+				SbuildCommand: strings.Join(cmd, " "),
+			})
+		}
 	}
 
 	var toInclude []string
@@ -572,6 +596,17 @@ func main() {
 	}
 	if len(toInclude) > 0 {
 		log.Printf("%d packages failed the first pass; you can rerun ratt only for them passing the option -include '^(%s)$'\n", len(toInclude), strings.Join(toInclude, "|"))
+	}
+
+	if *dryRun && *jsonOutput {
+		out, err := json.MarshalIndent(struct {
+			Builds []dryRunBuild `json:"dry_run_builds"`
+		}{Builds: dryRunBuilds}, "", "  ")
+		if err != nil {
+			log.Fatalf("Failed to marshal JSON: %v", err)
+		}
+		fmt.Println(string(out))
+		return
 	}
 
 	if *dryRun {
