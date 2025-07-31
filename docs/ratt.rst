@@ -20,7 +20,7 @@ SYNOPSIS
         [-dist DIST] [-sbuild_dist DIST]
         [-log_dir DIR] [-chdist NAME]
         [-direct-rdeps] [-rdeps-depth N]
-        <file>.changes
+        [-json] <file>.changes
 
 DESCRIPTION
 ===========
@@ -76,6 +76,10 @@ OPTIONS
  included.  See the ``--depth`` option in ``dose-ceve(1)`` manpage to see
  more details.
 
+**-json**
+ Emit dry-run output in structured JSON format to standard output. Must be used
+ together with `-dry_run`.
+
 Using `-chdist` for Suite Isolation
 ===================================
 
@@ -122,6 +126,10 @@ Skip packages known FTBFS::
 Limit to direct reverse build-dependencies only::
 
   $ ratt -direct-rdeps yourpackage_*.changes
+
+Print dry-run result in JSON format::
+
+  $ ratt -dry_run -json yourpackage_*.changes
 
 Filter specific packages::
 
