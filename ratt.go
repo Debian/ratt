@@ -92,8 +92,17 @@ var (
 		0,
 		"Set the maximum depth for reverse dependency resolution. For more details, see the --depth option in the dose-ceve(1) manpage")
 
+	jsonOutputDryRun = flag.Bool("json",
+		false,
+		"Output dry-run results as JSON (only valid with -dry_run)")
+
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
+
+type dryRunBuild struct {
+	Package       string `json:"package"`
+	SbuildCommand string `json:"sbuild_command"`
+}
 
 type ftbfsBug struct {
 	Source string `json:"source"`
@@ -418,6 +427,16 @@ func getAptIndexPaths(dist string) ([]string, []string) {
 func main() {
 	flag.Parse()
 
+	if *jsonOutputDryRun && !*dryRun {
+		log.Fatal("-json can only be used together with -dry_run")
+	}
+
+	// In -dry_run -json mode, suppress logs so only json is printed.
+	// TODO: replace with proper --quiet or --verbose handling.
+	if *dryRun && *jsonOutputDryRun {
+		log.SetOutput(io.Discard)
+	}
+
 	if flag.NArg() == 0 {
 		log.Fatalf("Usage: %s [options] <path-to-changes-file>...\n", os.Args[0])
 	}
@@ -552,6 +571,7 @@ func main() {
 	}
 	cnt := 1
 	buildresults := make(map[string](*buildResult))
+	var dryRunBuilds []dryRunBuild
 	for src, versions := range rebuild {
 		sort.Sort(sort.Reverse(version.Slice(versions)))
 		newest := versions[0]
@@ -562,6 +582,14 @@ func main() {
 			log.Printf("building %s failed: %v\n", src, result.err)
 		}
 		buildresults[src] = result
+
+		if *dryRun {
+			cmd := builder.buildCommandLine(src, &newest)
+			dryRunBuilds = append(dryRunBuilds, dryRunBuild{
+				Package:       src,
+				SbuildCommand: strings.Join(cmd, " "),
+			})
+		}
 	}
 
 	var toInclude []string
@@ -572,6 +600,18 @@ func main() {
 	}
 	if len(toInclude) > 0 {
 		log.Printf("%d packages failed the first pass; you can rerun ratt only for them passing the option -include '^(%s)$'\n", len(toInclude), strings.Join(toInclude, "|"))
+	}
+
+	if *dryRun && *jsonOutputDryRun {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		err := enc.Encode(struct {
+			Builds []dryRunBuild `json:"dry_run_builds"`
+		}{Builds: dryRunBuilds})
+		if err != nil {
+			log.Fatalf("Failed to write JSON: %v", err)
+		}
+		return
 	}
 
 	if *dryRun {
