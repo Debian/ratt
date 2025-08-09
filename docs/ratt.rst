@@ -17,7 +17,7 @@ SYNOPSIS
 
    ratt [-h] [-dry_run] [-recheck] [-skip_ftbfs]
         [-include REGEX] [-exclude REGEX]
-        [-dist DIST] [-sbuild_dist DIST]
+        [-dist DIST] [-sbuild_dist DIST] [-sbuild-keep-build-log]
         [-log_dir DIR] [-chdist NAME]
         [-direct-rdeps] [-rdeps-depth N]
         [-json] <file>.changes
@@ -65,6 +65,10 @@ OPTIONS
 
 **-skip_ftbfs**
  Skip packages marked as FTBFS on udd.debian.org.
+
+**-sbuild-keep-build-log**
+ Let sbuild produce its ``.build`` log. Without this option, ratt passes
+ sbuild's ``--nolog`` and saves console output in ``-log_dir`` instead.
 
 **-direct-rdeps**
  Limit the reverse dependency analysis to packages that directly Build-Depend
@@ -124,6 +128,10 @@ Dry run::
 Skip packages known FTBFS::
 
   $ ratt -skip_ftbfs -chdist sid yourpackage_*.changes
+
+Keep sbuild .build logs::
+
+  $ ratt -sbuild-keep-build-log yourpackage_*.changes
 
 Limit to direct reverse build-dependencies only::
 
