@@ -20,7 +20,7 @@ SYNOPSIS
         [-dist DIST] [-sbuild_dist DIST]
         [-log_dir DIR] [-chdist NAME]
         [-direct-rdeps] [-rdeps-depth N]
-        <file>.changes
+        [-json] <file>.changes
 
 DESCRIPTION
 ===========
@@ -76,6 +76,12 @@ OPTIONS
  included.  See the ``--depth`` option in ``dose-ceve(1)`` manpage to see
  more details.
 
+**-json**
+ Output results in JSON format (currently only works in combination with
+ `-dry_run`). JSON is written to stdout; human-readable logs go to stderr. Each
+ entry includes the reverse build-dependency name, its version, and the
+ corresponding `sbuild` command that would be executed.
+
 Using `-chdist` for Suite Isolation
 ===================================
 
@@ -122,6 +128,18 @@ Skip packages known FTBFS::
 Limit to direct reverse build-dependencies only::
 
   $ ratt -direct-rdeps yourpackage_*.changes
+
+Print dry-run result in JSON format::
+
+  $ ratt -dry_run -json yourpackage_*.changes
+
+Suppress all logs and print only JSON (clean output)::
+
+  $ ratt -dry_run -json yourpackage_*.changes 2>/dev/null
+
+Extract only the sbuild commands (with jq)::
+
+  $ ratt -dry_run -json yourpackage_*.changes 2>/dev/null | jq -r '.dry_run_builds[].sbuild_command'
 
 Filter specific packages::
 
