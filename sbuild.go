@@ -14,6 +14,7 @@ type sbuild struct {
 	dist      string
 	logDir    string
 	dryRun    bool
+	keepBuildLog  bool
 	extraDebs []string
 }
 
@@ -24,9 +25,11 @@ func (s *sbuild) buildCommandLine(sourcePackage string, version *version.Version
 		"sbuild",
 		"--arch-all",
 		"--dist=" + s.dist,
-		"--nolog",
-		target,
 	}
+	if !s.keepBuildLog {
+		cmd = append(cmd, "--nolog")
+	}
+	cmd = append(cmd, target)
 	for _, filename := range s.extraDebs {
 		cmd = append(cmd, fmt.Sprintf("--extra-package=%s", filename))
 	}
@@ -47,15 +50,22 @@ func (s *sbuild) build(sourcePackage string, version *version.Version) *buildRes
 	cmd := exec.Command(commandLine[0], commandLine[1:]...)
 	target := fmt.Sprintf("%s_%s", sourcePackage, version)
 
-	buildlog, err := os.Create(filepath.Join(s.logDir, target))
-	defer buildlog.Close()
-	if err != nil {
-		result.err = err
-		return result
+	if !s.keepBuildLog {
+		buildlog, err := os.Create(filepath.Join(s.logDir, target))
+		if err != nil {
+			result.err = err
+			return result
+		}
+		defer buildlog.Close()
+		cmd.Stdout = buildlog
+		cmd.Stderr = buildlog
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
 	}
-	cmd.Stdout = buildlog
-	cmd.Stderr = buildlog
 	result.err = cmd.Run()
-	result.logFile = buildlog.Name()
+	if !s.keepBuildLog {
+		result.logFile = filepath.Join(s.logDir, target)
+	}
 	return result
 }

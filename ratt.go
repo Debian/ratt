@@ -84,6 +84,10 @@ var (
 		false,
 		"Filter out packages tagged as FTBFS from udd.debian.org")
 
+	sbuildKeepBuildLog = flag.Bool("sbuild-keep-build-log",
+		false,
+		"Let sbuild create its .build log. Without this option, ratt passes sbuild's --nolog and saves console output in -log_dir instead")
+
 	directRdeps = flag.Bool("direct-rdeps",
 		false,
 		"Limit reverse dependency analysis to packages that directly Build-Depend on the target. Equivalent to --rdeps-depth=2")
@@ -561,6 +565,7 @@ func main() {
 	builder := &sbuild{
 		dist:      *sbuildDist,
 		logDir:    *logDir,
+		keepBuildLog:  *sbuildKeepBuildLog,
 		dryRun:    *dryRun,
 		extraDebs: debs,
 	}
@@ -618,6 +623,7 @@ func main() {
 		recheckBuilder := &sbuild{
 			dist:   *sbuildDist,
 			logDir: *logDir + "_recheck",
+			keepBuildLog: *sbuildKeepBuildLog,
 			dryRun: false,
 		}
 		if err := os.MkdirAll(recheckBuilder.logDir, 0755); err != nil {
