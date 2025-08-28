@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 
+	"pault.ag/go/archive"
 	"pault.ag/go/debian/control"
 	"pault.ag/go/debian/version"
 )
@@ -181,6 +182,22 @@ func fetchCodenameFromDist(dist string) (string, error) {
 	}
 
 	return "", fmt.Errorf("unable to find Codename field in Release file for %s", dist)
+}
+
+// Map a codename (for instance: "bookworm") to its suite ("stable", "oldstable", ...),
+// using the release metadata provided by pault.ag/go/archive
+func codenameToSuite(codename string) (string, error) {
+	suites := []string{"stable", "oldstable"}
+	for _, s := range suites {
+		rel, _, err := archive.CachedRelease(s)
+		if err != nil {
+			return "", fmt.Errorf("fetching release for suite %q: %w", s, err)
+		}
+		if rel.Codename == codename {
+			return rel.Suite, nil
+		}
+	}
+	return "", fmt.Errorf("no suite found for codename %q", codename)
 }
 
 func dependsOn(src control.SourceIndex, binaries map[string]bool) bool {
@@ -387,7 +404,22 @@ func getIndexPathsForDist(targetCodename, chdistInstance string) (sourcesPaths [
 	case "experimental":
 		indexCodenames = []string{"sid", "rc-buggy"}
 	default:
-		indexCodenames = []string{targetCodename}
+		// treat as a concrete codename (for instance, "bookworm"). If it is part of
+		// stable or oldstable, include maintenance pockets (-updates/-security).
+		suite, err := codenameToSuite(targetCodename)
+		if err != nil {
+			log.Printf("Warning: could not resolve Suite for %q: %v (using only %q)",
+				targetCodename, err, targetCodename)
+			indexCodenames = []string{targetCodename}
+		} else if suite == "stable" || suite == "oldstable" {
+			indexCodenames = []string{
+				targetCodename,
+				targetCodename + "-updates",
+				targetCodename + "-security",
+			}
+		} else {
+			indexCodenames = []string{targetCodename}
+		}
 	}
 
 	for _, codename := range indexCodenames {
