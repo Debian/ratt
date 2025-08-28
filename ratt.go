@@ -379,6 +379,30 @@ func fallbackIndexPaths() ([]string, []string) {
 	return sourcesPaths, packagesPaths
 }
 
+func getIndexPathsForDist(targetCodename, chdistInstance string) (sourcesPaths []string, packagesPaths []string) {
+	var indexCodenames []string
+	switch targetCodename {
+	case "unstable":
+		indexCodenames = []string{"sid"}
+	case "experimental":
+		indexCodenames = []string{"sid", "rc-buggy"}
+	default:
+		indexCodenames = []string{targetCodename}
+	}
+
+	for _, codename := range indexCodenames {
+		var srcs, pkgs []string
+		if chdistInstance != "" {
+			srcs, pkgs = getChdistIndexPaths(codename, chdistInstance)
+		} else {
+			srcs, pkgs = getAptIndexPaths(codename)
+		}
+		sourcesPaths = append(sourcesPaths, srcs...)
+		packagesPaths = append(packagesPaths, pkgs...)
+	}
+	return
+}
+
 func getIndexTargets(cmdName string, args []string) ([]string, error) {
 	var stderr bytes.Buffer
 
@@ -478,19 +502,15 @@ func main() {
 
 	if strings.TrimSpace(*dist) == "" {
 		*dist = changesDist
-		// Rewrite unstable to sid, which apt-get indextargets (below) requires.
-		if *dist == "unstable" {
-			*dist = "sid"
-		}
 		log.Printf("Setting -dist=%s (from .changes file)\n", *dist)
 	}
 
 	var sourcesPaths, packagesPaths []string
 
 	if *useChdist != "" {
-		sourcesPaths, packagesPaths = getChdistIndexPaths(*dist, *useChdist)
+		sourcesPaths, packagesPaths = getIndexPathsForDist(*dist, *useChdist)
 	} else {
-		sourcesPaths, packagesPaths = getAptIndexPaths(*dist)
+		sourcesPaths, packagesPaths = getIndexPathsForDist(*dist, "")
 	}
 
 	if len(sourcesPaths) == 0 {
