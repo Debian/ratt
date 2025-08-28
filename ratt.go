@@ -625,6 +625,19 @@ func main() {
 	sbuildDistNorm := normalizeSbuildDist(*sbuildDist)
 	extraExperimental := *sbuildDist == "experimental"
 
+	// for stable/oldstable codenames, include maintenance pockets (-updates, -security)
+	extraPockets := false
+	pocketsCodename := ""
+	if suite, err := codenameToSuite(*sbuildDist); err == nil {
+		if suite == "stable" || suite == "oldstable" {
+			extraPockets = true
+			pocketsCodename = *sbuildDist
+		}
+	} else {
+		log.Printf("Warning: could not resolve Suite for %q: %v (no -updates/-security overlays)",
+			*sbuildDist, err)
+	}
+
 	builder := &sbuild{
 		dist:      sbuildDistNorm,
 		logDir:    *logDir,
@@ -632,6 +645,8 @@ func main() {
 		dryRun:    *dryRun,
 		extraDebs: debs,
 		extraExperimental: extraExperimental,
+		extraPockets:      extraPockets,
+		pocketsCodename:   pocketsCodename,
 	}
 	cnt := 1
 	buildresults := make(map[string](*buildResult))
@@ -690,6 +705,8 @@ func main() {
 			keepBuildLog: *sbuildKeepBuildLog,
 			dryRun: false,
 			extraExperimental: extraExperimental,
+			extraPockets:      extraPockets,
+			pocketsCodename:   pocketsCodename,
 		}
 		if err := os.MkdirAll(recheckBuilder.logDir, 0755); err != nil {
 			log.Fatal(err)
