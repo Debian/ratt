@@ -17,6 +17,8 @@ type sbuild struct {
 	keepBuildLog  bool
 	extraDebs []string
 	extraExperimental bool
+	extraPockets bool
+	pocketsCodename string
 }
 
 func (s *sbuild) buildCommandLine(sourcePackage string, version *version.Version) []string {
@@ -27,7 +29,14 @@ func (s *sbuild) buildCommandLine(sourcePackage string, version *version.Version
 		"--arch-all",
 		"--dist=" + s.dist,
 	}
-	if s.extraExperimental {
+	switch {
+	case s.extraPockets && s.pocketsCodename != "":
+		cmd = append(cmd,
+			"--extra-repository='deb-src http://deb.debian.org/debian "+s.pocketsCodename+" main'",
+			"--extra-repository='deb-src http://deb.debian.org/debian "+s.pocketsCodename+"-updates main'",
+			"--extra-repository='deb-src http://deb.debian.org/debian-security "+s.pocketsCodename+"-security main'",
+		)
+	case s.extraExperimental:
 		cmd = append(cmd,
 			"--extra-repository='deb-src http://deb.debian.org/debian unstable main'",
 			"--extra-repository='deb http://deb.debian.org/debian experimental main'",
