@@ -453,6 +453,14 @@ func getAptIndexPaths(dist string) ([]string, []string) {
 	return fallbackIndexPaths()
 }
 
+// returns the dist sbuild should use. we build experimental against unstable.
+func normalizeSbuildDist(dist string) string {
+	if dist == "experimental" {
+		return "unstable"
+	}
+	return dist
+}
+
 func main() {
 	flag.Parse()
 
@@ -582,12 +590,16 @@ func main() {
 		log.Fatal(err)
 	}
 
+	sbuildDistNorm := normalizeSbuildDist(*sbuildDist)
+	extraExperimental := *sbuildDist == "experimental"
+
 	builder := &sbuild{
-		dist:      *sbuildDist,
+		dist:      sbuildDistNorm,
 		logDir:    *logDir,
 		keepBuildLog:  *sbuildKeepBuildLog,
 		dryRun:    *dryRun,
 		extraDebs: debs,
+		extraExperimental: extraExperimental,
 	}
 	cnt := 1
 	buildresults := make(map[string](*buildResult))
@@ -641,10 +653,11 @@ func main() {
 	if *recheck {
 		log.Printf("Begin to rebuild all failed packages without new changes\n")
 		recheckBuilder := &sbuild{
-			dist:   *sbuildDist,
+			dist:   sbuildDistNorm,
 			logDir: *logDir + "_recheck",
 			keepBuildLog: *sbuildKeepBuildLog,
 			dryRun: false,
+			extraExperimental: extraExperimental,
 		}
 		if err := os.MkdirAll(recheckBuilder.logDir, 0755); err != nil {
 			log.Fatal(err)
