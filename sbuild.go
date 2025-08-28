@@ -16,6 +16,7 @@ type sbuild struct {
 	dryRun    bool
 	keepBuildLog  bool
 	extraDebs []string
+	extraExperimental bool
 }
 
 func (s *sbuild) buildCommandLine(sourcePackage string, version *version.Version) []string {
@@ -25,6 +26,15 @@ func (s *sbuild) buildCommandLine(sourcePackage string, version *version.Version
 		"sbuild",
 		"--arch-all",
 		"--dist=" + s.dist,
+	}
+	if s.extraExperimental {
+		cmd = append(cmd,
+			"--extra-repository='deb-src http://deb.debian.org/debian unstable main'",
+			"--extra-repository='deb http://deb.debian.org/debian experimental main'",
+			"--extra-repository='deb-src http://deb.debian.org/debian experimental main'",
+			"--build-dep-resolver=aspcud",
+			"--aspcud-criteria='-count(down),-count(changed,APT-Release:=/experimental/),-removed,-changed,-new'",
+		)
 	}
 	if !s.keepBuildLog {
 		cmd = append(cmd, "--nolog")
