@@ -21,9 +21,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
+	"golang.org/x/sync/errgroup"
 	"pault.ag/go/archive"
 	"pault.ag/go/debian/control"
 	"pault.ag/go/debian/version"
@@ -105,6 +108,14 @@ var (
 		false,
 		"Output results in JSON format (currently only works in combination with -dry_run)")
 
+	parallel = flag.Bool("parallel",
+		false,
+		"Build packages in parallel")
+
+	jobs = flag.Int("jobs",
+		runtime.NumCPU(),
+		"Number of parallel build jobs (default: number of CPU cores)")
+
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
 
@@ -121,17 +132,17 @@ type ftbfsBug struct {
 func getFTBFSFromUDD(codename string) (map[string]struct{}, error) {
 	baseURL := "https://udd.debian.org/bugs/"
 	params := url.Values{
-		"release":             {codename},
-		"ftbfs":               {"only"},
-		"notmain":             {"ign"},
-		"merged":              {""},
-		"fnewerval":           {"7"},
-		"flastmodval":         {"7"},
-		"rc":                  {"1"},
-		"sortby":              {"id"},
-		"caffected_packages":  {"1"},
-		"sorto":               {"asc"},
-		"format":              {"json"},
+		"release":            {codename},
+		"ftbfs":              {"only"},
+		"notmain":            {"ign"},
+		"merged":             {""},
+		"fnewerval":          {"7"},
+		"flastmodval":        {"7"},
+		"rc":                 {"1"},
+		"sortby":             {"id"},
+		"caffected_packages": {"1"},
+		"sorto":              {"asc"},
+		"format":             {"json"},
 	}
 
 	fullURL := baseURL + "?" + params.Encode()
@@ -497,11 +508,63 @@ func normalizeSbuildDist(dist string) string {
 	return dist
 }
 
+func buildPackages(builder *sbuild, rebuild map[string][]version.Version, numJobs int) (map[string]*buildResult, []dryRunBuild) {
+	var eg errgroup.Group
+	eg.SetLimit(numJobs)
+
+	buildresults := make(map[string]*buildResult)
+	var dryRunBuilds []dryRunBuild
+	var resultsMu sync.Mutex
+	var cntMu sync.Mutex
+	cnt := 1
+
+	for src, versions := range rebuild {
+		eg.Go(func() error {
+			sort.Sort(sort.Reverse(version.Slice(versions)))
+			newest := versions[0]
+
+			cntMu.Lock()
+			currentCnt := cnt
+			cnt++
+			cntMu.Unlock()
+
+			log.Printf("Building package %d of %d: %s\n", currentCnt, len(rebuild), src)
+			result := builder.build(src, &newest)
+			if result.err != nil {
+				log.Printf("building %s failed: %v\n", src, result.err)
+			}
+
+			resultsMu.Lock()
+			defer resultsMu.Unlock()
+			buildresults[src] = result
+			if *dryRun {
+				cmd := builder.buildCommandLine(src, &newest)
+				dryRunBuilds = append(dryRunBuilds, dryRunBuild{
+					Package:       src,
+					Version:       newest.String(),
+					SbuildCommand: strings.Join(cmd, " "),
+				})
+			}
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		log.Printf("Error during parallel build: %v\n", err)
+	}
+	log.Printf("Completed building %d packages with %d workers\n", len(buildresults), numJobs)
+	return buildresults, dryRunBuilds
+}
+
 func main() {
 	flag.Parse()
 
 	if *jsonOutput && !*dryRun {
 		log.Fatal("-json can only be used together with -dry_run")
+	}
+
+	if *jobs <= 0 {
+		log.Fatal("-jobs must be a positive number")
 	}
 
 	if flag.NArg() == 0 {
@@ -650,38 +713,25 @@ func main() {
 	}
 
 	builder := &sbuild{
-		dist:      sbuildDistNorm,
-		logDir:    *logDir,
-		keepBuildLog:  *sbuildKeepBuildLog,
-		dryRun:    *dryRun,
-		extraDebs: debs,
+		dist:              sbuildDistNorm,
+		logDir:            *logDir,
+		keepBuildLog:      *sbuildKeepBuildLog,
+		dryRun:            *dryRun,
+		extraDebs:         debs,
 		extraExperimental: extraExperimental,
 		extraPockets:      extraPockets,
 		pocketsCodename:   pocketsCodename,
 	}
-	cnt := 1
+
 	buildresults := make(map[string](*buildResult))
 	var dryRunBuilds []dryRunBuild
-	for src, versions := range rebuild {
-		sort.Sort(sort.Reverse(version.Slice(versions)))
-		newest := versions[0]
-		log.Printf("Building package %d of %d: %s \n", cnt, len(rebuild), src)
-		cnt++
-		result := builder.build(src, &newest)
-		if result.err != nil {
-			log.Printf("building %s failed: %v\n", src, result.err)
-		}
-		buildresults[src] = result
 
-		if *dryRun {
-			cmd := builder.buildCommandLine(src, &newest)
-			dryRunBuilds = append(dryRunBuilds, dryRunBuild{
-				Package:       src,
-				Version:       newest.String(),
-				SbuildCommand: strings.Join(cmd, " "),
-			})
-		}
+	numJobs := 1
+	if *parallel {
+		numJobs = *jobs
+		log.Printf("Building packages in parallel using %d workers\n", numJobs)
 	}
+	buildresults, dryRunBuilds = buildPackages(builder, rebuild, numJobs)
 
 	var toInclude []string
 	for src, result := range buildresults {
@@ -695,8 +745,8 @@ func main() {
 
 	if *dryRun && *jsonOutput {
 		out, err := json.MarshalIndent(struct {
-			ReverseDepCount     int           `json:"reverse_dep_count"`
-			Builds              []dryRunBuild `json:"dry_run_builds"`
+			ReverseDepCount int           `json:"reverse_dep_count"`
+			Builds          []dryRunBuild `json:"dry_run_builds"`
 		}{
 			Builds:          dryRunBuilds,
 			ReverseDepCount: len(dryRunBuilds),
@@ -715,10 +765,10 @@ func main() {
 	if *recheck {
 		log.Printf("Begin to rebuild all failed packages without new changes\n")
 		recheckBuilder := &sbuild{
-			dist:   sbuildDistNorm,
-			logDir: *logDir + "_recheck",
-			keepBuildLog: *sbuildKeepBuildLog,
-			dryRun: false,
+			dist:              sbuildDistNorm,
+			logDir:            *logDir + "_recheck",
+			keepBuildLog:      *sbuildKeepBuildLog,
+			dryRun:            false,
 			extraExperimental: extraExperimental,
 			extraPockets:      extraPockets,
 			pocketsCodename:   pocketsCodename,
