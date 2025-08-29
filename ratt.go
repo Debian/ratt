@@ -684,8 +684,12 @@ func main() {
 
 	if *dryRun && *jsonOutput {
 		out, err := json.MarshalIndent(struct {
-			Builds []dryRunBuild `json:"dry_run_builds"`
-		}{Builds: dryRunBuilds}, "", "  ")
+			ReverseDepCount     int           `json:"reverse_dep_count"`
+			Builds              []dryRunBuild `json:"dry_run_builds"`
+		}{
+			Builds:          dryRunBuilds,
+			ReverseDepCount: len(dryRunBuilds),
+		}, "", "  ")
 		if err != nil {
 			log.Fatalf("Failed to marshal JSON: %v", err)
 		}
