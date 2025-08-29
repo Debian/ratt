@@ -91,7 +91,7 @@ var (
 
 	directRdeps = flag.Bool("direct-rdeps",
 		false,
-		"Limit reverse dependency analysis to packages that directly Build-Depend on the target. Equivalent to --rdeps-depth=2")
+		"Limit reverse dependency analysis to packages that directly Build-Depend on the target. Equivalent to -rdeps-depth=2")
 
 	rdepsDepth = flag.Int("rdeps-depth",
 		0,
