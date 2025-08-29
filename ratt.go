@@ -21,8 +21,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"pault.ag/go/debian/control"
 	"pault.ag/go/debian/version"
@@ -99,6 +101,14 @@ var (
 	jsonOutput = flag.Bool("json",
 		false,
 		"Output results in JSON format (currently only works in combination with -dry_run)")
+
+	parallel = flag.Bool("parallel",
+		false,
+		"Build packages in parallel")
+
+	jobs = flag.Int("jobs",
+		runtime.NumCPU(),
+		"Number of parallel build jobs (default: number of CPU cores)")
 
 	listsPrefixRe = regexp.MustCompile(`/([^/]*_dists_.*)_InRelease$`)
 )
@@ -429,11 +439,103 @@ func getAptIndexPaths(dist string) ([]string, []string) {
 	return fallbackIndexPaths()
 }
 
+type buildJob struct {
+	src     string
+	version version.Version
+}
+
+func buildPackagesSequential(builder *sbuild, rebuild map[string][]version.Version) (map[string]*buildResult, []dryRunBuild) {
+	buildresults := make(map[string]*buildResult)
+	var dryRunBuilds []dryRunBuild
+	cnt := 1
+
+	for src, versions := range rebuild {
+		sort.Sort(sort.Reverse(version.Slice(versions)))
+		newest := versions[0]
+		log.Printf("Building package %d of %d: %s\n", cnt, len(rebuild), src)
+		cnt++
+		result := builder.build(src, &newest)
+		if result.err != nil {
+			log.Printf("building %s failed: %v\n", src, result.err)
+		}
+		buildresults[src] = result
+
+		if *dryRun {
+			cmd := builder.buildCommandLine(src, &newest)
+			dryRunBuilds = append(dryRunBuilds, dryRunBuild{
+				Package:       src,
+				Version:       newest.String(),
+				SbuildCommand: strings.Join(cmd, " "),
+			})
+		}
+	}
+	return buildresults, dryRunBuilds
+}
+
+func buildPackagesParallel(builder *sbuild, rebuild map[string][]version.Version, numJobs int) (map[string]*buildResult, []dryRunBuild) {
+	jobs := make(chan buildJob, len(rebuild))
+	results := make(chan *buildResult, len(rebuild))
+	var wg sync.WaitGroup
+
+	// Start workers
+	for i := 0; i < numJobs; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for job := range jobs {
+				log.Printf("Worker %d building: %s\n", workerID, job.src)
+				result := builder.build(job.src, &job.version)
+				if result.err != nil {
+					log.Printf("Worker %d: building %s failed: %v\n", workerID, job.src, result.err)
+				}
+				results <- result
+			}
+		}(i)
+	}
+
+	// Send jobs
+	go func() {
+		defer close(jobs)
+		for src, versions := range rebuild {
+			sort.Sort(sort.Reverse(version.Slice(versions)))
+			newest := versions[0]
+			jobs <- buildJob{src: src, version: newest}
+		}
+	}()
+
+	// Collect results
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	buildresults := make(map[string]*buildResult)
+	var dryRunBuilds []dryRunBuild
+	for result := range results {
+		buildresults[result.src] = result
+		if *dryRun {
+			cmd := builder.buildCommandLine(result.src, result.version)
+			dryRunBuilds = append(dryRunBuilds, dryRunBuild{
+				Package:       result.src,
+				Version:       result.version.String(),
+				SbuildCommand: strings.Join(cmd, " "),
+			})
+		}
+	}
+
+	log.Printf("Completed building %d packages with %d workers\n", len(buildresults), numJobs)
+	return buildresults, dryRunBuilds
+}
+
 func main() {
 	flag.Parse()
 
 	if *jsonOutput && !*dryRun {
 		log.Fatal("-json can only be used together with -dry_run")
+	}
+
+	if *jobs <= 0 {
+		log.Fatal("-jobs must be a positive number")
 	}
 
 	if flag.NArg() == 0 {
@@ -569,28 +671,15 @@ func main() {
 		dryRun:    *dryRun,
 		extraDebs: debs,
 	}
-	cnt := 1
+
 	buildresults := make(map[string](*buildResult))
 	var dryRunBuilds []dryRunBuild
-	for src, versions := range rebuild {
-		sort.Sort(sort.Reverse(version.Slice(versions)))
-		newest := versions[0]
-		log.Printf("Building package %d of %d: %s \n", cnt, len(rebuild), src)
-		cnt++
-		result := builder.build(src, &newest)
-		if result.err != nil {
-			log.Printf("building %s failed: %v\n", src, result.err)
-		}
-		buildresults[src] = result
 
-		if *dryRun {
-			cmd := builder.buildCommandLine(src, &newest)
-			dryRunBuilds = append(dryRunBuilds, dryRunBuild{
-				Package:       src,
-				Version:       newest.String(),
-				SbuildCommand: strings.Join(cmd, " "),
-			})
-		}
+	if *parallel {
+		log.Printf("Building packages in parallel using %d workers\n", *jobs)
+		buildresults, dryRunBuilds = buildPackagesParallel(builder, rebuild, *jobs)
+	} else {
+		buildresults, dryRunBuilds = buildPackagesSequential(builder, rebuild)
 	}
 
 	var toInclude []string
