@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"pault.ag/go/debian/version"
 )
@@ -44,6 +45,20 @@ func (s *sbuild) buildCommandLine(sourcePackage string, version *version.Version
 			"--build-dep-resolver=aspcud",
 			"--aspcud-criteria='-count(down),-count(changed,APT-Release:=/experimental/),-removed,-changed,-new'",
 		)
+		// force installation of provided extra packages by adding them as build-deps
+		for _, filename := range s.extraDebs {
+			base := filepath.Base(filename)
+			if strings.HasSuffix(base, ".deb") {
+				base = strings.TrimSuffix(base, ".deb")
+			}
+			parts := strings.Split(base, "_")
+			if len(parts) >= 2 {
+				pkgName := parts[0]
+				pkgVer := parts[1]
+				arg := fmt.Sprintf("--add-depends='%s (= %s)'", pkgName, pkgVer)
+				cmd = append(cmd, arg)
+			}
+		}
 	}
 	if !s.keepBuildLog {
 		cmd = append(cmd, "--nolog")
