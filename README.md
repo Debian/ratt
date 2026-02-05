@@ -56,6 +56,19 @@ $ ratt golang-github-jacobsa-gcloud_0.0\~git20150709-2_amd64.changes
 
 ratt uses `sbuild(1)` to build packages, see https://wiki.debian.org/sbuild for instructions on how to set up sbuild. Be sure to add `--components=main,contrib,non-free` to the sbuild-createchroot line in case you want to deal with packages outside of main as well.
 
+# Experimental (buildd-like) mode
+
+By default, ratt resolves and rebuilds reverse build-dependencies from
+**unstable**, even when the input `.changes` targets **experimental**, and
+injects the locally built `.deb`s referenced by that `.changes` via `sbuild
+--extra-package`.
+
+To mimic the buildd setup for experimental (experimental overlay + `aspcud`
+buildd criteria), run:
+
+```sh
+ratt -sbuild-experimental-aspcud yourpackage_*.changes
+```
 # Targeting a different suite
 
 Imagine you’re running Debian stable on your machine, but you’re working on a package for Debian unstable (“sid”). Unless you already have configured a corresponding `sources.list` entry for sid, you will encounter an error message like this:

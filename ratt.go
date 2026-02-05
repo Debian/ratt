@@ -69,6 +69,10 @@ var (
 		"",
 		"sbuild --dist= value (e.g. \"sid\"). Defaults to the Distribution: entry from the specified .changes file")
 
+	sbuildExperimentalAspcud = flag.Bool("sbuild-experimental-aspcud",
+		false,
+		"Enable experimental+aspcud (buildd-style solver/criteria). Default: build in unstable and just inject .debs via --extra-package")
+
 	dist = flag.String("dist",
 		"",
 		"Distribution to look up reverse-build-dependencies from. Defaults to the Distribution: entry from the specified .changes file")
@@ -542,6 +546,13 @@ func main() {
 
 	if strings.TrimSpace(*dist) == "" {
 		*dist = changesDist
+		// In the common workflow, we rebuild reverse build-deps from unstable even
+		// when the updated package is targeted at experimental. Users can
+		// explicitly opt into experimental suite behavior via
+		// --sbuild-experimental-aspcud
+		if changesDist == "experimental" && !*sbuildExperimentalAspcud {
+			*dist = "unstable"
+		}
 		log.Printf("Setting -dist=%s (from .changes file)\n", *dist)
 	}
 
@@ -623,7 +634,7 @@ func main() {
 	}
 
 	sbuildDistNorm := normalizeSbuildDist(*sbuildDist)
-	extraExperimental := *sbuildDist == "experimental"
+	extraExperimental := *sbuildDist == "experimental" && *sbuildExperimentalAspcud
 
 	// for stable/oldstable codenames, include maintenance pockets (-updates, -security)
 	extraPockets := false
