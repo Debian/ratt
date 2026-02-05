@@ -17,7 +17,7 @@ SYNOPSIS
 
    ratt [-h] [-dry_run] [-recheck] [-skip_ftbfs]
         [-include REGEX] [-exclude REGEX]
-        [-dist DIST] [-sbuild_dist DIST] [-sbuild-keep-build-log]
+        [-dist DIST] [-sbuild_dist DIST] [-sbuild-experimental-aspcud] [-sbuild-keep-build-log]
         [-log_dir DIR] [-chdist NAME]
         [-direct-rdeps] [-rdeps-depth N]
         [-json] <file>.changes
@@ -62,6 +62,12 @@ OPTIONS
 
 **-sbuild_dist** *string*
  Value passed to `sbuild --dist=` (e.g., `sid`).
+
+**-sbuild-experimental-aspcud**
+ Enable buildd-like experimental mode in sbuild. Add the experimental
+ repository overlay and use aspcud with buildd criteria. By default, ratt
+ rebuilds reverse build-dependencies from unstable and only injects the
+ provided ``.deb``'s via ``sbuild --extra-package``.
 
 **-skip_ftbfs**
  Skip packages marked as FTBFS on udd.debian.org.
