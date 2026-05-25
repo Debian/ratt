@@ -117,6 +117,47 @@ ratt -recheck -exclude '^(gcc-9|gcc-8|llvm-toolchain-10|libreoffice|trilinos|llv
 
 **Note**: you need to escape the `+` sign in package names as in `dbus-c\+\+` to avoid messing up the regexp expression.
 
+# Transition-aware candidate selection
+
+For library transitions, using all binary packages from the `.changes` file as
+reverse build-dependency roots can be too broad. The `-transition_affected`
+option instead scans the selected `Packages` indexes, finds binary packages
+whose parsed `Depends` package names match the supplied regex, maps those
+binaries back to source packages, and rebuilds those source packages with the
+`.deb`s from the `.changes` file still injected via `sbuild --extra-package`.
+The argument is only a regex matched against parsed dependency package names,
+it is not a full Ben expression such as `.depends ~ /.../`, and it is not
+matched against the raw `Depends` field text. In practice, use anchored package
+name regexes such as `^(libfoo2|libfoo1)$`.
+
+For instance:
+
+```
+ratt -transition_affected '^(libpoppler\-cpp3|libpoppler156|libpoppler\-cpp2|libpoppler147)$' ../poppler_*.changes
+```
+
+## Choosing the regex
+
+If a Ben transition tracker exists, start from its `Affected` expression. For
+instance, convert `Affected: .depends ~ /\b(libfoo2|libfoo1)\b/` to
+`-transition_affected '^(libfoo2|libfoo1)$'`.
+
+If there is no tracker yet, build the regex from the old and new runtime
+library package names for the transition. Include both, since some packages may
+still depend on the old package while others already depend on the new one. Do
+not copy every binary from the `.changes` file into the regex. Leave out
+unrelated packages such as `-dev`, `-doc`, dbgsym, or utilities, unless they
+are actually part of the transition.
+
+:warning: `-direct-rdeps` and `-rdeps-depth` are ignored in this mode because
+selection is based on binary package `Depends`, not on `dose-ceve` reverse
+dependency traversal.
+
+If a matching binary maps to a source package that is not present in the
+selected `Sources` indexes, ratt logs a warning and cannot schedule that source
+for rebuild. When comparing with Ben transition pages, make sure your local
+archive metadata includes the same relevant components, for example `contrib`
+when transition consumers live there.
 
 # Using `-chdist` to target multiple Debian suites
 

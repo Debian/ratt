@@ -104,6 +104,10 @@ var (
 		0,
 		"Set the maximum depth for reverse dependency resolution. For more details, see the --depth option in the dose-ceve(1) manpage")
 
+	transitionAffected = flag.String("transition_affected",
+		"",
+		"Select transition rebuild candidates by matching binary Depends package names against a regex")
+
 	jsonOutput = flag.Bool("json",
 		false,
 		"Output results in JSON format (currently only works in combination with -dry_run)")
@@ -225,24 +229,31 @@ func dependsOn(src control.SourceIndex, binaries map[string]bool) bool {
 	return false
 }
 
-func addReverseBuildDeps(sourcesPath string, binaries map[string]bool, rebuild map[string][]version.Version) error {
-	log.Printf("Loading sources index %q\n", sourcesPath)
+func aptIndexReader(indexPath string) (*bufio.Reader, func(), error) {
 	catFile := exec.Command("/usr/lib/apt/apt-helper",
 		"cat-file",
-		sourcesPath)
-	var s *bufio.Reader
+		indexPath)
 	if lines, err := catFile.Output(); err == nil {
-		s = bufio.NewReader(bytes.NewReader(lines))
-	} else {
-		// Fallback for older versions of apt-get. See
-		// <20160111171230.GA17291@debian.org> for context.
-		o, err := os.Open(sourcesPath)
-		if err != nil {
-			return err
-		}
-		defer o.Close()
-		s = bufio.NewReader(o)
+		return bufio.NewReader(bytes.NewReader(lines)), func() {}, nil
 	}
+
+	// Fallback for older versions of apt-get. See
+	// <20160111171230.GA17291@debian.org> for context.
+	o, err := os.Open(indexPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return bufio.NewReader(o), func() { o.Close() }, nil
+}
+
+func addReverseBuildDeps(sourcesPath string, binaries map[string]bool, rebuild map[string][]version.Version) error {
+	log.Printf("Loading sources index %q\n", sourcesPath)
+	s, cleanup, err := aptIndexReader(sourcesPath)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	idx, err := control.ParseSourceIndex(s)
 	if err != nil && err != io.EOF {
 		return err
@@ -269,6 +280,91 @@ func fallback(sourcesPaths []string, binaries []string) (map[string][]version.Ve
 			return nil, err
 		}
 	}
+	return rebuild, nil
+}
+
+func binaryDependsMatchesAffected(bin control.BinaryIndex, affected *regexp.Regexp) bool {
+	depends := bin.GetDepends()
+	for _, possibility := range depends.GetAllPossibilities() {
+		if affected.MatchString(possibility.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func addTransitionAffectedSources(packagesPath string, affected *regexp.Regexp, selected map[string]struct{}) error {
+	log.Printf("Loading packages index %q\n", packagesPath)
+	p, cleanup, err := aptIndexReader(packagesPath)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	idx, err := control.ParseBinaryIndex(p)
+	if err != nil && err != io.EOF {
+		return err
+	}
+
+	for _, bin := range idx {
+		if !binaryDependsMatchesAffected(bin, affected) {
+			continue
+		}
+		selected[bin.SourcePackage()] = struct{}{}
+	}
+
+	return nil
+}
+
+func addSelectedSourceVersions(sourcesPath string, selected map[string]struct{}, rebuild map[string][]version.Version) error {
+	log.Printf("Loading sources index %q\n", sourcesPath)
+	s, cleanup, err := aptIndexReader(sourcesPath)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	idx, err := control.ParseSourceIndex(s)
+	if err != nil && err != io.EOF {
+		return err
+	}
+
+	for _, src := range idx {
+		if _, ok := selected[src.Package]; ok {
+			rebuild[src.Package] = append(rebuild[src.Package], src.Version)
+		}
+	}
+
+	return nil
+}
+
+func transitionAffectedSources(packagesPaths, sourcesPaths []string, affectedRegex string) (map[string][]version.Version, error) {
+	affected, err := regexp.Compile(affectedRegex)
+	if err != nil {
+		return nil, err
+	}
+
+	selected := make(map[string]struct{})
+	for _, packagesPath := range packagesPaths {
+		if err := addTransitionAffectedSources(packagesPath, affected, selected); err != nil {
+			return nil, err
+		}
+	}
+	log.Printf("Found %d source packages with binary Depends matching -transition_affected\n", len(selected))
+
+	rebuild := make(map[string][]version.Version)
+	for _, sourcesPath := range sourcesPaths {
+		if err := addSelectedSourceVersions(sourcesPath, selected, rebuild); err != nil {
+			return nil, err
+		}
+	}
+
+	for src := range selected {
+		if _, ok := rebuild[src]; !ok {
+			log.Printf("Warning: source package %q selected by -transition_affected was not found in any Sources index", src)
+		}
+	}
+
 	return rebuild, nil
 }
 
@@ -636,7 +732,20 @@ func main() {
 		}
 	}
 
-	rebuild, err := reverseBuildDeps(packagesPaths, sourcesPaths, binaries)
+	var rebuild map[string][]version.Version
+	var err error
+	if *transitionAffected != "" {
+		if *directRdeps {
+			log.Printf("Warning: --direct-rdeps is ignored in -transition_affected mode")
+		}
+		if *rdepsDepth != 0 {
+			log.Printf("Warning: --rdeps-depth=%d is ignored in -transition_affected mode", *rdepsDepth)
+		}
+		log.Printf("Selecting rebuild candidates using -transition_affected=%q\n", *transitionAffected)
+		rebuild, err = transitionAffectedSources(packagesPaths, sourcesPaths, *transitionAffected)
+	} else {
+		rebuild, err = reverseBuildDeps(packagesPaths, sourcesPaths, binaries)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}

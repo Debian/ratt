@@ -20,6 +20,7 @@ SYNOPSIS
         [-dist DIST] [-sbuild_dist DIST] [-sbuild-experimental-aspcud] [-sbuild-keep-build-log]
         [-log_dir DIR] [-chdist NAME]
         [-direct-rdeps] [-rdeps-depth N]
+        [-transition_affected REGEX]
         [-json] <file>.changes
 
 DESCRIPTION
@@ -86,6 +87,25 @@ OPTIONS
  included.  See the ``--depth`` option in ``dose-ceve(1)`` manpage to see
  more details.
 
+**-transition_affected** *regex*
+ Select source packages for a transition by scanning parsed binary package
+ ``Depends`` from the selected ``Packages`` indexes. If a parsed dependency
+ package name matches the regex, the binary package is mapped back to its
+ source package, and ratt rebuilds that source package while still injecting
+ the ``.deb`` files from the required ``.changes`` file.
+
+ This mode does not use the binaries from the ``.changes`` file as reverse
+ build-dependency roots. The argument is only a regex matching parsed
+ dependency package names, not a regex matched against the full raw ``Depends``
+ field. Users should usually pass anchored package name regexes such as
+ ``^(libfoo2|libfoo1)$``.
+
+ If a matching binary maps to a source package that is not present in the
+ selected ``Sources`` indexes, ratt logs a warning and cannot schedule that
+ source for rebuild. When comparing with Ben transition pages, ensure the local
+ archive metadata includes the same relevant components, such as ``contrib``
+ for transition consumers that live there.
+
 **-json**
  Output results in JSON format (currently only works in combination with
  `-dry_run`). JSON is written to stdout; human-readable logs go to stderr. Each
@@ -142,6 +162,23 @@ Keep sbuild .build logs::
 Limit to direct reverse build-dependencies only::
 
   $ ratt -direct-rdeps yourpackage_*.changes
+
+Transition-aware candidate selection::
+
+  $ ratt -transition_affected '^(libfoo2|libfoo1)$' yourpackage_*.changes
+
+Choosing the transition regex:
+
+If a Ben transition tracker exists, start from its ``Affected`` expression. For
+example, convert ``Affected: .depends ~ /\b(libfoo2|libfoo1)\b/`` to
+``-transition_affected '^(libfoo2|libfoo1)$'``.
+
+If there is no tracker yet, build the regex from the old and new runtime
+library package names for the transition. Include both, since some packages may
+still depend on the old package while others already depend on the new one. Do
+not copy every binary from the ``.changes`` file into the regex. Leave out
+unrelated packages such as ``-dev``, ``-doc``, dbgsym, or utilities, unless
+they are actually part of the transition.
 
 Print dry-run result in JSON format::
 
