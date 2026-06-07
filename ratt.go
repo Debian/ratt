@@ -316,7 +316,7 @@ func reverseBuildDeps(packagesPaths, sourcesPaths []string, binaries []string) (
 		"-G", "pkg")
 
 	if *directRdeps && *rdepsDepth != 0 && *rdepsDepth != 2 {
-		log.Printf("Warning: --direct-rdeps is ignored because --rdeps-depth=%d is also set", *rdepsDepth)
+		log.Printf("Warning: -direct-rdeps is ignored because -rdeps-depth=%d is also set", *rdepsDepth)
 	}
 	if *directRdeps && *rdepsDepth == 0 {
 		*rdepsDepth = 2
