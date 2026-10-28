@@ -33,17 +33,17 @@ func (s *sbuild) buildCommandLine(sourcePackage string, version *version.Version
 	switch {
 	case s.extraPockets && s.pocketsCodename != "":
 		cmd = append(cmd,
-			"--extra-repository='deb-src http://deb.debian.org/debian "+s.pocketsCodename+" main'",
-			"--extra-repository='deb-src http://deb.debian.org/debian "+s.pocketsCodename+"-updates main'",
-			"--extra-repository='deb-src http://deb.debian.org/debian-security "+s.pocketsCodename+"-security main'",
+			"--extra-repository=deb-src http://deb.debian.org/debian "+s.pocketsCodename+" main",
+			"--extra-repository=deb-src http://deb.debian.org/debian "+s.pocketsCodename+"-updates main",
+			"--extra-repository=deb-src http://deb.debian.org/debian-security "+s.pocketsCodename+"-security main",
 		)
 	case s.extraExperimental:
 		cmd = append(cmd,
-			"--extra-repository='deb-src http://deb.debian.org/debian unstable main'",
-			"--extra-repository='deb http://deb.debian.org/debian experimental main'",
-			"--extra-repository='deb-src http://deb.debian.org/debian experimental main'",
+			"--extra-repository=deb-src http://deb.debian.org/debian unstable main",
+			"--extra-repository=deb http://deb.debian.org/debian experimental main",
+			"--extra-repository=deb-src http://deb.debian.org/debian experimental main",
 			"--build-dep-resolver=aspcud",
-			"--aspcud-criteria='-count(down),-count(changed,APT-Release:=/experimental/),-removed,-changed,-new'",
+			"--aspcud-criteria=-count(down),-count(changed,APT-Release:=/experimental/),-removed,-changed,-new",
 		)
 		// force installation of provided extra packages by adding them as build-deps
 		for _, filename := range s.extraDebs {
@@ -55,7 +55,7 @@ func (s *sbuild) buildCommandLine(sourcePackage string, version *version.Version
 			if len(parts) >= 2 {
 				pkgName := parts[0]
 				pkgVer := parts[1]
-				arg := fmt.Sprintf("--add-depends='%s (= %s)'", pkgName, pkgVer)
+				arg := fmt.Sprintf("--add-depends=%s (= %s)", pkgName, pkgVer)
 				cmd = append(cmd, arg)
 			}
 		}
